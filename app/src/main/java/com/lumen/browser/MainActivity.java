@@ -1,5 +1,13 @@
 package com.lumen.browser;
 
+import static com.lumen.browser.Scripts.*;
+
+import android.util.Log;
+import androidx.webkit.Profile;
+import androidx.webkit.ProfileStore;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
 import android.Manifest;
 import android.app.PictureInPictureParams;
 import android.content.ContentUris;
@@ -12,6 +20,7 @@ import android.util.Rational;
 import android.view.animation.OvershootInterpolator;
 import android.widget.HorizontalScrollView;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -56,6 +65,7 @@ import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -91,6 +101,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
+    static final String TAG = "Lasur";
+    /** One shared pool for background work instead of ad-hoc threads. */
+    static final java.util.concurrent.ExecutorService BG = java.util.concurrent.Executors.newFixedThreadPool(3);
+    /** Ordered disk writes (tab state, history). */
+    static final java.util.concurrent.ExecutorService IO = Store.IO;
+    // Injected page scripts live in Scripts.java
+
     static final String[] VIDEO_EXT = {".mp4", ".webm", ".m3u8", ".mkv", ".mov", ".flv", ".3gp", ".mpd", ".m4v", ".avi", ".wmv"};
     static final int REQ_FILE = 11, REQ_STORAGE = 12, REQ_NOTIF = 13;
     static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT, WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -105,7 +122,7 @@ public class MainActivity extends Activity {
     ScrollView suggestScroll;
     EditText omni, findInput;
     TextView tabCount, findCount, videoBadge;
-    ImageView homeBtn, menuBtn, lockIcon, clearBtn;
+    ImageView homeBtn, backBtn, menuBtn, lockIcon, clearBtn;
     View divider;
     ProgressBar progress;
 
@@ -115,44 +132,6 @@ public class MainActivity extends Activity {
     String mobileUA, desktopUA;
     boolean switcherIncognito;
 
-    static final String COSMETIC_JS = "(function(){try{if(window.__lumenCss)return;window.__lumenCss=1;var c=LumenBridge.css(location.hostname);if(!c)return;"
-            + "try{var s=new CSSStyleSheet();s.replaceSync(c);document.adoptedStyleSheets=document.adoptedStyleSheets.concat([s]);}"
-            + "catch(e){var st=document.createElement('style');st.textContent=c;(document.head||document.documentElement).appendChild(st);}}catch(e){}})();";
-    static final String VIDEO_JS = "(function(){try{if(window.__lumenScan)return;window.__lumenScan=1;"
-            + "function sc(){try{var v=document.querySelectorAll('video,video source,audio source');for(var i=0;i<v.length;i++){"
-            + "var s=v[i].currentSrc||v[i].src;if(s&&s.indexOf('http')==0)LumenBridge.onVideo(s,document.title);}}catch(e){}}"
-            + "sc();setInterval(sc,2500);document.addEventListener('play',sc,true);document.addEventListener('loadedmetadata',sc,true);}catch(e){}})();";
-    static final String YT_JS = "(function(){if(window.__lasurYtp)return;window.__lasurYtp=1;var K=['adPlacements','playerAds','adSlots','adBreakHeartbeatParams','adBreakParams'];func"
-            + "tion pr(o,d){try{if(!o||typeof o!='object'||d>4)return o;for(var i=0;i<K.length;i++)if(K[i] in o)delete o[K[i]];if(o.playerResponse)pr(o.playerRespons"
-            + "e,d+1);if(o.response)pr(o.response,d+1);if(o.playerConfig&&o.playerConfig.daiConfig)delete o.playerConfig.daiConfig;if(Array.isArray(o)){for(var j=0;j"
-            + "<o.length;j++)pr(o[j],d+1)}}catch(e){}return o}function trap(n){try{var v=window[n];if(v)pr(v,0);Object.defineProperty(window,n,{configurable:true,get"
-            + ":function(){return v},set:function(x){v=pr(x,0)}})}catch(e){}}try{var jp=JSON.parse;JSON.parse=function(){var r=jp.apply(this,arguments);try{if(r&&typ"
-            + "eof r=='object'&&(r.adPlacements||r.playerAds||r.adSlots||r.playerResponse||(r.response&&typeof r.response=='object')))pr(r,0)}catch(e){}return r};var"
-            + " rj=Response.prototype.json;Response.prototype.json=function(){return rj.apply(this,arguments).then(function(o){return pr(o,0)})}}catch(e){}trap('ytIn"
-            + "itialPlayerResponse');trap('ytInitialData');try{var yp=window.ytplayer||{};if(yp.config&&yp.config.args&&yp.config.args.raw_player_response)pr(yp.conf"
-            + "ig.args.raw_player_response,0)}catch(e){}function hit(u){u=String(u||'');return u.indexOf('/youtubei/v1/player')>=0||u.indexOf('/youtubei/v1/next')>=0"
-            + "||u.indexOf('/youtubei/v1/reel')>=0||u.indexOf('/youtubei/v1/browse')>=0}try{var of=window.fetch;window.fetch=function(i,o){var u=typeof i=='string'?i"
-            + ":(i&&i.url);var p=of.apply(this,arguments);if(!hit(u))return p;return p.then(function(r){if(!r||!r.ok)return r;return r.clone().text().then(function(t"
-            + "){try{var j=JSON.parse(t);pr(j,0);return new Response(JSON.stringify(j),{status:r.status,statusText:r.statusText,headers:r.headers})}catch(e){return r"
-            + "}},function(){return r})})}}catch(e){}try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){this.__lu=u;return oo.apply"
-            + "(this,arguments)};var gd=Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype,'responseText'),gr=Object.getOwnPropertyDescriptor(XMLHttpRequest.pr"
-            + "ototype,'response');function fix(x,s){if(!hit(x.__lu)||typeof s!='string'||x.readyState!=4)return s;if(x.__lc!==undefined)return x.__lc;try{var j=JSON"
-            + ".parse(s);pr(j,0);x.__lc=JSON.stringify(j)}catch(e){x.__lc=s}return x.__lc}Object.defineProperty(XMLHttpRequest.prototype,'responseText',{configurable"
-            + ":true,get:function(){return fix(this,gd.get.call(this))}});Object.defineProperty(XMLHttpRequest.prototype,'response',{configurable:true,get:function()"
-            + "{var r=gr.get.call(this);return (this.responseType==''||this.responseType=='text')?fix(this,r):r}});}catch(e){}try{var st=document.createElement('styl"
-            + "e');st.textContent='.ytp-ad-module,.ytp-ad-overlay-container,.ytp-ad-player-overlay,.ytp-ad-text,.ytp-ad-preview-container,ytm-promoted-sparkles-web-r"
-            + "enderer,ytm-companion-ad-renderer,ytd-ad-slot-renderer,ad-slot-renderer,ytm-ad-slot-renderer,.video-ads,#player-ads,ytm-promoted-video-renderer{displa"
-            + "y:none!important}.ytp-ad-skip-button-container,.ytp-skip-ad,.ytm-skip-ad-button{opacity:0.01!important}.ad-showing video,.ad-interrupting video{opacit"
-            + "y:0!important}';(document.head||document.documentElement).appendChild(st)}catch(e){}var lastTap=0;function skip(){try{var a=document.querySelector('.a"
-            + "d-showing,.ad-interrupting');if(!a){if(window.__lasurAdV){var q=window.__lasurAdV;window.__lasurAdV=null;try{q.muted=!!window.__lasurAdWasMuted;if(q.p"
-            + "laybackRate>2)q.playbackRate=1}catch(e){}}return}var p=a.querySelector('video');if(p){if(!window.__lasurAdV){window.__lasurAdV=p;window.__lasurAdWasMu"
-            + "ted=p.muted}p.muted=true;try{if(p.playbackRate<16)p.playbackRate=16}catch(e){}if(isFinite(p.duration)&&p.duration>0&&p.currentTime<p.duration-0.05){tr"
-            + "y{p.currentTime=p.duration}catch(e){}}if(p.paused)try{p.play()}catch(e){}}var bs=document.querySelectorAll('.ytp-ad-skip-button,.ytp-ad-skip-button-mo"
-            + "dern,.ytp-skip-ad-button,.ytm-skip-ad-button button,.ytm-skip-ad-button,button[class*=skip-ad],[class*=ad-skip] button');for(var i=0;i<bs.length;i++){"
-            + "var b=bs[i];b.click();var r=b.getBoundingClientRect();var now=Date.now();if(r.width>0&&r.height>0&&now-lastTap>700&&window.LumenBridge&&LumenBridge.ta"
-            + "p){lastTap=now;var d=window.devicePixelRatio||1;LumenBridge.tap((r.left+r.width/2)*d,(r.top+r.height/2)*d)}break}}catch(e){}}['loadedmetadata','durati"
-            + "onchange','timeupdate','playing','canplay'].forEach(function(n){document.addEventListener(n,function(e){if(e.target&&e.target.tagName=='VIDEO'&&e.targ"
-            + "et.closest&&e.target.closest('.ad-showing,.ad-interrupting'))skip()},true)});setInterval(skip,150);})();";
 
     // ------------------------------------------------------------------ lifecycle
     @Override protected void onCreate(Bundle b) {
@@ -167,6 +146,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         Ui.init(this, tm, ac);
         AdBlocker.init(this);
+        wipeIncognito();
         AdBlocker.enabled = store.adblock();
         AdBlocker.whitelist = store.whitelist();
         AdBlocker.totalBlocked.set(store.p.getLong("blockedTotal", 0));
@@ -177,7 +157,10 @@ public class MainActivity extends Activity {
         desktopUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + ver + " Safari/537.36";
         buildUi();
         setContentView(root);
-        if (b == null) showSplash(); else if (!store.bool("onboarded", false)) showWelcome();
+        setupEdgeToEdge();
+        String act = getIntent() != null ? getIntent().getAction() : null;
+        boolean viaLink = Intent.ACTION_VIEW.equals(act) || Intent.ACTION_SEND.equals(act) || Intent.ACTION_WEB_SEARCH.equals(act);
+        if (b == null && !viaLink) showSplash(); else if (!store.bool("onboarded", false)) showWelcome();
         root.requestFocus();
         if (store.restoreTabs()) restoreTabs();
         boolean handled = handleIntent(getIntent());
@@ -187,6 +170,7 @@ public class MainActivity extends Activity {
         }
         registerDlReceiver();
         registerPipReceiver();
+        registerBack();
     }
 
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleIntent(i); }
@@ -194,14 +178,15 @@ public class MainActivity extends Activity {
     @Override protected void onPause() {
         super.onPause();
         saveTabs();
+        store.flush();
         store.p.edit().putLong("blockedTotal", AdBlocker.totalBlocked.get()).apply();
         CookieManager.getInstance().flush();
     }
 
     @Override protected void onDestroy() {
-        if (dlReceiver != null) { try { unregisterReceiver(dlReceiver); } catch (Exception ignored) { } }
-        if (pipReceiver != null) { try { unregisterReceiver(pipReceiver); } catch (Exception ignored) { } }
-        for (Tab t : tabs) { try { t.web.destroy(); } catch (Exception ignored) { } }
+        if (dlReceiver != null) { try { unregisterReceiver(dlReceiver); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
+        if (pipReceiver != null) { try { unregisterReceiver(pipReceiver); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
+        for (Tab t : tabs) { try { t.web.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
         super.onDestroy();
     }
 
@@ -229,6 +214,7 @@ public class MainActivity extends Activity {
     void saveTabs() {
         JSONArray arr = new JSONArray();
         int idx = 0, n = 0;
+        final ArrayList<byte[]> states = new ArrayList<>();
         try {
             for (Tab t : tabs) {
                 if (t.incognito) continue;
@@ -237,11 +223,44 @@ public class MainActivity extends Activity {
                 o.put("u", u == null ? "" : u);
                 o.put("t", t.title);
                 arr.put(o);
+                // back/forward history, so "Back" still works after the app was killed
+                Bundle b = t.pendingState;
+                if (b == null && !t.ntp && t.web.getUrl() != null) {
+                    try { Bundle x = new Bundle(); if (t.web.saveState(x) != null) b = x; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+                }
+                states.add(b == null ? null : bundleBytes(b));
                 if (t == current) idx = n;
                 n++;
             }
-        } catch (Exception ignored) { }
+        } catch (Exception e) { Log.w(TAG, "saveTabs", e); }
         store.p.edit().putString("tabs", arr.toString()).putInt("tabIndex", idx).apply();
+        final File dir = new File(getFilesDir(), "tabstate");
+        IO.execute(() -> {
+            dir.mkdirs();
+            File[] old = dir.listFiles();
+            if (old != null) for (File f : old) f.delete();
+            for (int i = 0; i < states.size(); i++) {
+                byte[] d = states.get(i);
+                if (d == null) continue;
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(new File(dir, i + ".bin"))) { o.write(d); } catch (Exception e) { Log.w(TAG, "tab state", e); }
+            }
+        });
+    }
+
+    static byte[] bundleBytes(Bundle b) {
+        android.os.Parcel p = android.os.Parcel.obtain();
+        try { b.writeToParcel(p, 0); return p.marshall(); } catch (Exception e) { return null; } finally { p.recycle(); }
+    }
+
+    Bundle bundleFrom(File f) {
+        if (!f.exists() || f.length() > 4 * 1024 * 1024) return null;
+        android.os.Parcel p = android.os.Parcel.obtain();
+        try {
+            byte[] d = java.nio.file.Files.readAllBytes(f.toPath());
+            p.unmarshall(d, 0, d.length);
+            p.setDataPosition(0);
+            return p.readBundle(getClassLoader());
+        } catch (Exception e) { return null; } finally { p.recycle(); }
     }
 
     void restoreTabs() {
@@ -252,9 +271,12 @@ public class MainActivity extends Activity {
                 Tab t = createTab(false, null);
                 String u = o.optString("u");
                 t.title = o.optString("t");
-                if (!u.isEmpty()) { t.pendingUrl = u; t.url = u; t.ntp = false; }
+                if (!u.isEmpty()) {
+                    t.pendingUrl = u; t.url = u; t.ntp = false;
+                    t.pendingState = bundleFrom(new File(new File(getFilesDir(), "tabstate"), i + ".bin"));
+                }
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     // ------------------------------------------------------------------ UI construction
@@ -289,27 +311,32 @@ public class MainActivity extends Activity {
         stripScroll.setFillViewport(true);
         stripRow = new LinearLayout(this);
         stripRow.setGravity(Gravity.BOTTOM);
-        stripRow.setPadding(dp(6), dp(6), dp(6), 0);
+        stripRow.setPaddingRelative(dp(6), dp(6), dp(6), 0);
         stripScroll.addView(stripRow, new FrameLayout.LayoutParams(WRAP, MATCH));
         stripScroll.setVisibility(View.GONE);
         mainCol.addView(stripScroll, new LinearLayout.LayoutParams(MATCH, dp(44)));
 
         toolbar = new LinearLayout(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(4), 0, dp(2), 0);
+        toolbar.setPaddingRelative(dp(4), 0, dp(2), 0);
         mainCol.addView(toolbar, new LinearLayout.LayoutParams(MATCH, dp(56)));
 
         homeBtn = Ui.iconBtn(this, R.drawable.ic_home, Ui.TEXT2);
         homeBtn.setOnClickListener(v -> goHome());
         toolbar.addView(homeBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        backBtn = Ui.iconBtn(this, R.drawable.ic_back, Ui.TEXT2);
+        backBtn.setOnClickListener(v -> { if (current != null && !current.ntp && current.web.canGoBack()) current.web.goBack(); else handleBack(); });
+        backBtn.setVisibility(View.GONE);
+        toolbar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
 
         omniPill = new LinearLayout(this);
         omniPill.setGravity(Gravity.CENTER_VERTICAL);
-        omniPill.setPadding(dp(12), 0, dp(2), 0);
+        omniPill.setPaddingRelative(dp(3), 0, dp(2), 0);
         lockIcon = Ui.iconBtn(this, R.drawable.ic_search, Ui.TEXT2);
         lockIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        lockIcon.setPaddingRelative(dp(9), dp(9), dp(9), dp(9));
         lockIcon.setOnClickListener(v -> showSiteInfo());
-        omniPill.addView(lockIcon, new LinearLayout.LayoutParams(dp(18), dp(18)));
+        omniPill.addView(lockIcon, new LinearLayout.LayoutParams(dp(36), dp(36)));
         omni = new EditText(this);
         omni.setBackground(null);
         omni.setSingleLine(true);
@@ -318,15 +345,15 @@ public class MainActivity extends Activity {
         omni.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         omni.setImeOptions(EditorInfo.IME_ACTION_GO | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         omni.setSelectAllOnFocus(true);
-        omni.setPadding(dp(10), 0, dp(4), 0);
+        omni.setPaddingRelative(dp(4), 0, dp(4), 0);
         omniPill.addView(omni, new LinearLayout.LayoutParams(0, MATCH, 1));
         clearBtn = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
         clearBtn.setVisibility(View.GONE);
         clearBtn.setOnClickListener(v -> omni.setText(""));
-        omniPill.addView(clearBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        omniPill.addView(clearBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
         micBtn = Ui.iconBtn(this, R.drawable.ic_mic, Ui.TEXT2);
         micBtn.setOnClickListener(v -> voiceSearch());
-        omniPill.addView(micBtn, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        omniPill.addView(micBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
         LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(44), 1);
         plp.setMargins(dp(4), 0, dp(4), 0);
         toolbar.addView(omniPill, plp);
@@ -344,7 +371,7 @@ public class MainActivity extends Activity {
 
         menuBtn = Ui.iconBtn(this, R.drawable.ic_more, Ui.TEXT2);
         menuBtn.setOnClickListener(v -> showMenu());
-        toolbar.addView(menuBtn, new LinearLayout.LayoutParams(dp(40), dp(48)));
+        toolbar.addView(menuBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
 
         buildFindBar();
 
@@ -372,17 +399,18 @@ public class MainActivity extends Activity {
         progress.setProgressBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
         progress.setVisibility(View.GONE);
         content.addView(progress, new FrameLayout.LayoutParams(MATCH, dp(3), Gravity.TOP));
+        if (store.bottomBar()) layoutBars();
 
         videoFab = new FrameLayout(this);
         videoFab.setBackground(Ui.round(Ui.ACCENT, 26));
         videoFab.setElevation(dp(6));
         LinearLayout fr = new LinearLayout(this);
         fr.setGravity(Gravity.CENTER_VERTICAL);
-        fr.setPadding(dp(16), 0, dp(20), 0);
+        fr.setPaddingRelative(dp(16), 0, dp(20), 0);
         int fabFg = Ui.dark ? 0xFF202124 : Color.WHITE;
         fr.addView(Ui.icon(this, R.drawable.ic_download, fabFg), new LinearLayout.LayoutParams(dp(24), dp(24)));
         videoLabel = Ui.medium(Ui.text(this, L.t("Видео"), 15, fabFg));
-        videoLabel.setPadding(dp(8), 0, 0, 0);
+        videoLabel.setPaddingRelative(dp(8), 0, 0, 0);
         fr.addView(videoLabel);
         videoFab.addView(fr, new FrameLayout.LayoutParams(WRAP, MATCH));
         videoFab.setForeground(Ui.ripple(this, false));
@@ -438,7 +466,7 @@ public class MainActivity extends Activity {
     void buildFindBar() {
         findBar = new LinearLayout(this);
         findBar.setGravity(Gravity.CENTER_VERTICAL);
-        findBar.setPadding(dp(12), 0, dp(4), 0);
+        findBar.setPaddingRelative(dp(12), 0, dp(4), 0);
         findBar.setVisibility(View.GONE);
         findInput = new EditText(this);
         findInput.setBackground(null);
@@ -483,7 +511,7 @@ public class MainActivity extends Activity {
         t.incognito = inc;
         t.parent = parent;
         t.desktop = store.desktopDefault();
-        t.web = new LWebView(this);
+        t.web = newWebView(inc);
         setupWeb(t);
         int pos = parent != null && tabs.contains(parent) ? tabs.indexOf(parent) + 1 : tabs.size();
         tabs.add(pos, t);
@@ -491,7 +519,11 @@ public class MainActivity extends Activity {
     }
 
     void selectTab(Tab t) {
-        if (current != null && current != t) { captureThumb(current); try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ignored) { } }
+        if (toolbar != null) setBarsHidden(false);
+        if (current != null && current != t) {
+            captureThumb(current);
+            try { current.web.evaluateJavascript(PAUSE_JS, null); current.web.onPause(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        }
         hidePwBar();
         if (current != null && customView != null) hideCustomView();
         current = t;
@@ -499,7 +531,16 @@ public class MainActivity extends Activity {
         if (t.web.getParent() != null) ((ViewGroup) t.web.getParent()).removeView(t.web);
         webContainer.addView(t.web, new FrameLayout.LayoutParams(MATCH, MATCH));
         t.web.onResume();
+        t.lastUsed = System.currentTimeMillis();
+        if (t.pendingState != null) {
+            Bundle st = t.pendingState;
+            t.pendingState = null;
+            boolean ok = false;
+            try { android.webkit.WebBackForwardList l = t.web.restoreState(st); ok = l != null && l.getSize() > 0; } catch (Exception e) { Log.w(TAG, "restoreState", e); }
+            if (ok) t.pendingUrl = null;
+        }
         if (t.pendingUrl != null) { String u = t.pendingUrl; t.pendingUrl = null; t.web.loadUrl(u); }
+        trimLiveTabs();
         if (findBar.getVisibility() == View.VISIBLE) hideFind();
         refreshChrome();
     }
@@ -510,7 +551,12 @@ public class MainActivity extends Activity {
         tabs.remove(i);
         for (Tab o : tabs) if (o.parent == t) o.parent = null;
         if (t.web.getParent() != null) ((ViewGroup) t.web.getParent()).removeView(t.web);
-        try { t.web.stopLoading(); t.web.destroy(); } catch (Exception ignored) { }
+        try { t.web.stopLoading(); t.web.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        if (t.incognito) {
+            boolean anyInc = false;
+            for (Tab o : tabs) if (o.incognito) { anyInc = true; break; }
+            if (!anyInc) { wipeIncognito(); for (ArrayList<Closed> g : new ArrayList<>(closedStack)) for (Closed c : g) if (c.inc) { closedStack.remove(g); break; } }
+        }
         if (t == current) {
             current = null;
             Tab next = null;
@@ -527,6 +573,58 @@ public class MainActivity extends Activity {
         if (switcher.getVisibility() == View.VISIBLE) buildSwitcher();
     }
 
+    // ---------------------------------------------------------------- tab memory: unload / recreate web views
+    static final int MAX_LIVE_TABS = 6;
+
+    /** Replaces the tab's WebView with a fresh, empty one (after a renderer crash or to free memory). */
+    void replaceWeb(Tab t) {
+        WebView old = t.web;
+        if (old.getParent() != null) ((ViewGroup) old.getParent()).removeView(old);
+        try { old.stopLoading(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        try { old.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        t.web = newWebView(t.incognito);
+        setupWeb(t);
+        t.loading = false; t.progress = 0; t.video = null; t.mediaPlaying = false; t.injectedFor = null;
+        if (t == current) {
+            webContainer.removeAllViews();
+            webContainer.addView(t.web, new FrameLayout.LayoutParams(MATCH, MATCH));
+            t.web.onResume();
+        }
+    }
+
+    boolean isLive(Tab t) { return t.web != null && t.web.getUrl() != null && t.pendingState == null && t.pendingUrl == null; }
+
+    /** Unloads a background tab: keeps its history in memory, frees the page. */
+    void discard(Tab t) {
+        if (t == current || !isLive(t) || t.mediaPlaying) return;
+        String u = t.web.getUrl();
+        Bundle b = new Bundle();
+        try { if (t.web.saveState(b) != null) t.pendingState = b; } catch (Exception e) { Log.w(TAG, "saveState", e); }
+        replaceWeb(t);
+        t.pendingUrl = u;
+        t.url = u;
+    }
+
+    /** Keeps at most MAX_LIVE_TABS pages loaded; the least recently used ones are unloaded. */
+    void trimLiveTabs() { trimLiveTabs(MAX_LIVE_TABS); }
+
+    void trimLiveTabs(int keep) {
+        ArrayList<Tab> live = new ArrayList<>();
+        for (Tab o : tabs) if (o != current && isLive(o) && !o.mediaPlaying) live.add(o);
+        int allowed = Math.max(0, keep - 1);
+        if (live.size() <= allowed) return;
+        java.util.Collections.sort(live, (a, b) -> Long.compare(a.lastUsed, b.lastUsed));
+        for (int i = 0; i < live.size() - allowed; i++) discard(live.get(i));
+    }
+
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_RUNNING_CRITICAL || level == TRIM_MEMORY_COMPLETE) trimLiveTabs(1);
+        else if (level >= TRIM_MEMORY_RUNNING_LOW) trimLiveTabs(3);
+    }
+
+    @Override public void onLowMemory() { super.onLowMemory(); trimLiveTabs(1); }
+
     void captureThumb(Tab t) {
         try {
             if (t.ntp || t.web.getWidth() == 0 || t.web.getParent() == null) { t.thumb = null; return; }
@@ -540,6 +638,80 @@ public class MainActivity extends Activity {
             t.web.draw(c);
             t.thumb = bmp;
         } catch (Throwable e) { t.thumb = null; }
+    }
+
+    // ---------------------------------------------------------------- incognito profile
+    static final String INC_PROFILE = "lasur_incognito";
+
+    /** WebView ≥ 123 can keep incognito cookies / storage in a separate profile. */
+    static boolean incProfile() {
+        try { return WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE); } catch (Throwable e) { return false; }
+    }
+
+    LWebView newWebView(boolean inc) {
+        LWebView w = new LWebView(this);
+        w.setOnScrollChangeListener((v, x, y, ox, oy) -> onWebScroll(v, y, oy));
+        if (inc && incProfile()) {
+            try { WebViewCompat.setProfile(w, INC_PROFILE); } catch (Throwable e) { Log.w(TAG, "incognito profile", e); }
+        }
+        return w;
+    }
+
+    int scrollAcc;
+    void onWebScroll(View v, int y, int oy) {
+        if (current == null || current.web != v || !store.hideOnScroll() || customView != null) return;
+        if (omni.hasFocus() || findBar.getVisibility() == View.VISIBLE) { setBarsHidden(false); return; }
+        int dy = y - oy;
+        if ((dy > 0) != (scrollAcc > 0)) scrollAcc = 0;
+        scrollAcc += dy;
+        if (y <= dp(8)) setBarsHidden(false);
+        else if (scrollAcc > dp(48)) setBarsHidden(true);
+        else if (scrollAcc < -dp(32)) setBarsHidden(false);
+    }
+
+    void setBarsHidden(boolean hide) {
+        int vis = hide ? View.GONE : View.VISIBLE;
+        if (toolbar.getVisibility() == vis) return;
+        toolbar.setVisibility(vis);
+        divider.setVisibility(vis);
+        scrollAcc = 0;
+    }
+
+    /** Puts the address bar above or below the page according to the setting. */
+    void layoutBars() {
+        boolean bottom = store.bottomBar();
+        mainCol.removeView(toolbar); mainCol.removeView(findBar); mainCol.removeView(divider); mainCol.removeView(content);
+        if (bottom) {
+            mainCol.addView(content, new LinearLayout.LayoutParams(MATCH, 0, 1));
+            mainCol.addView(divider, new LinearLayout.LayoutParams(MATCH, Math.max(1, dp(0.7f))));
+            mainCol.addView(findBar, new LinearLayout.LayoutParams(MATCH, dp(56)));
+            mainCol.addView(toolbar, new LinearLayout.LayoutParams(MATCH, dp(56)));
+        } else {
+            mainCol.addView(toolbar, new LinearLayout.LayoutParams(MATCH, dp(56)));
+            mainCol.addView(findBar, new LinearLayout.LayoutParams(MATCH, dp(56)));
+            mainCol.addView(divider, new LinearLayout.LayoutParams(MATCH, Math.max(1, dp(0.7f))));
+            mainCol.addView(content, new LinearLayout.LayoutParams(MATCH, 0, 1));
+        }
+        progress.setLayoutParams(new FrameLayout.LayoutParams(MATCH, dp(3), bottom ? Gravity.BOTTOM : Gravity.TOP));
+        setBarsHidden(false);
+    }
+
+    CookieManager cookies(boolean inc) {
+        if (inc && incProfile()) {
+            try { return ProfileStore.getInstance().getOrCreateProfile(INC_PROFILE).getCookieManager(); } catch (Throwable ignored) { }
+        }
+        return CookieManager.getInstance();
+    }
+
+    /** Forgets everything incognito tabs stored (called on start and when the last incognito tab closes). */
+    void wipeIncognito() {
+        if (!incProfile()) return;
+        try {
+            Profile p = ProfileStore.getInstance().getOrCreateProfile(INC_PROFILE);
+            p.getCookieManager().removeAllCookies(null);
+            p.getWebStorage().deleteAllData();
+            p.getGeolocationPermissions().clearAll();
+        } catch (Throwable e) { Log.w(TAG, "wipe incognito", e); }
     }
 
     void setupWeb(final Tab t) {
@@ -563,8 +735,9 @@ public class MainActivity extends Activity {
         t.ua = s.getUserAgentString();
         applySiteSettings(s);
         if (t.incognito) { s.setCacheMode(WebSettings.LOAD_NO_CACHE); s.setSaveFormData(false); }
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(w, true);
+        CookieManager cm = cookies(t.incognito);
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(w, true);
         w.setBackgroundColor(Color.WHITE);
         w.addJavascriptInterface(new Bridge(t), "LumenBridge");
         w.setWebViewClient(new Client(t));
@@ -592,7 +765,7 @@ public class MainActivity extends Activity {
                 MotionEvent u = MotionEvent.obtain(n, n + 30, MotionEvent.ACTION_UP, x, y, 0);
                 d.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
                 u.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-                try { t.web.dispatchTouchEvent(d); t.web.dispatchTouchEvent(u); } catch (Exception ignored) { }
+                try { t.web.dispatchTouchEvent(d); t.web.dispatchTouchEvent(u); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                 d.recycle(); u.recycle();
             });
         }
@@ -605,8 +778,9 @@ public class MainActivity extends Activity {
         }
         @JavascriptInterface public void pwPending(String href, String u, String p) {
             ui.post(() -> {
-                String site = Passwords.site(t.pageUrl);
-                if (site == null || !site.equals(Passwords.site(href))) return;
+                // The href argument comes from the page and is ignored: only the browser-known URL counts.
+                String site = Passwords.site(t.web != null && t.web.getUrl() != null ? t.web.getUrl() : t.pageUrl);
+                if (site == null) return;
                 t.pwSite = site; t.pwUser = u == null ? "" : u.trim(); t.pwPass = p;
             });
         }
@@ -614,8 +788,28 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void pwDone() { ui.post(() -> maybeOfferSave(t)); }
         @JavascriptInterface public void pwFocus(int isPass) { ui.post(() -> showPwBar(t)); }
         @JavascriptInterface public void pwBlur() { ui.post(() -> { ui.removeCallbacks(pwBlurR); ui.postDelayed(pwBlurR, 300); }); }
-        @JavascriptInterface public void saveBase64(String dataUrl, String name, String mime) {
-            new Thread(() -> saveDataUrl(dataUrl, name, mime)).start();
+        // Blob downloads arrive in chunks. Only a token issued by onDownload() (i.e. after the user / WebView
+        // started a download) is accepted, so pages cannot silently write files through the bridge.
+        @JavascriptInterface public boolean saveBegin(String token, String mime) {
+            BlobSave b = blobSaves.get(token);
+            if (b == null) return false;
+            try { b.saver = Saver.create(MainActivity.this, b.name, mimeFor(b.name, mime != null && !mime.isEmpty() ? mime : b.mime)); return true; }
+            catch (Exception e) { blobSaves.remove(token); ui.post(() -> toast(L.t("Не удалось сохранить: ") + e.getMessage())); return false; }
+        }
+        @JavascriptInterface public void saveChunk(String token, String b64) {
+            BlobSave b = blobSaves.get(token);
+            if (b == null || b.saver == null || b.failed) return;
+            try { b.saver.out.write(Base64.decode(b64, Base64.DEFAULT)); }
+            catch (Exception e) { b.failed = true; }
+        }
+        @JavascriptInterface public void saveEnd(String token, int ok) {
+            BlobSave b = blobSaves.remove(token);
+            if (b == null || b.saver == null) return;
+            try {
+                if (ok != 1 || b.failed) throw new java.io.IOException(L.t("Ошибка чтения файла"));
+                b.saver.finish();
+                ui.post(() -> toast(L.t("Сохранено в Загрузки/Lasur: ") + b.saver.name));
+            } catch (Exception e) { b.saver.abort(); ui.post(() -> toast(L.t("Не удалось сохранить: ") + e.getMessage())); }
         }
     }
 
@@ -625,7 +819,7 @@ public class MainActivity extends Activity {
             if (p == null) return false;
             p = p.toLowerCase();
             for (String e : VIDEO_EXT) if (p.endsWith(e)) return true;
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         return false;
     }
 
@@ -648,22 +842,31 @@ public class MainActivity extends Activity {
                 return false;
             }
             if (scheme.equals("about") || scheme.equals("data") || scheme.equals("blob") || scheme.equals("javascript")) return false;
-            try {
-                if (scheme.equals("intent")) {
-                    Intent i = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
-                    i.addCategory(Intent.CATEGORY_BROWSABLE);
-                    i.setComponent(null);
-                    i.setSelector(null);
-                    try { startActivity(i); }
-                    catch (ActivityNotFoundException e) {
-                        String fb = i.getStringExtra("browser_fallback_url");
-                        if (fb != null) v.loadUrl(fb);
-                        else if (i.getPackage() != null) startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + i.getPackage())));
+            final boolean gesture = r.hasGesture();
+            Runnable open = () -> {
+                try {
+                    if (scheme.equals("intent")) {
+                        Intent i = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                        i.addCategory(Intent.CATEGORY_BROWSABLE);
+                        i.setComponent(null);
+                        i.setSelector(null);
+                        try { startActivity(i); }
+                        catch (ActivityNotFoundException e) {
+                            String fb = i.getStringExtra("browser_fallback_url");
+                            // Only web pages are acceptable as a fallback (never javascript:, file:, content:…)
+                            if (fb != null && (fb.startsWith("https://") || fb.startsWith("http://"))) v.loadUrl(fb);
+                            else if (i.getPackage() != null) startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + i.getPackage())));
+                        }
+                    } else {
+                        Intent i = new Intent(Intent.ACTION_VIEW, u);
+                        i.addCategory(Intent.CATEGORY_BROWSABLE);
+                        startActivity(i);
                     }
-                } else {
-                    startActivity(new Intent(Intent.ACTION_VIEW, u));
-                }
-            } catch (Exception e) { toast(L.t("Нет приложения для открытия ссылки")); }
+                } catch (Exception e) { toast(L.t("Нет приложения для открытия ссылки")); }
+            };
+            // Without a user tap a page may not throw the user into another app: ask first.
+            if (gesture) open.run();
+            else if (t == current) snack(L.t("Сайт хочет открыть приложение"), L.t("Открыть"), open);
             return true;
         }
 
@@ -676,9 +879,11 @@ public class MainActivity extends Activity {
             t.url = url;
             t.pageUrl = url;
             try { t.pageHost = Uri.parse(url).getHost(); } catch (Exception e) { t.pageHost = null; }
-            if (t.pageHost != null && t.pageHost.endsWith("youtube.com") && AdBlocker.enabled && !AdBlocker.whitelist.contains(t.pageHost))
+            if (t.pageHost != null && t.pageHost.endsWith("youtube.com") && AdBlocker.enabled && !AdBlocker.siteAllowed(t.pageHost))
                 v.evaluateJavascript(YT_JS, null);
             t.video = null;
+            t.injectedFor = null;
+            t.mixed = false;
             t.blocked.set(0);
             t.loading = true;
             t.favicon = null;
@@ -692,7 +897,7 @@ public class MainActivity extends Activity {
         }
 
         @Override public void onPageCommitVisible(WebView v, String url) {
-            if (AdBlocker.enabled && !AdBlocker.whitelist.contains(t.pageHost)) v.evaluateJavascript(COSMETIC_JS, null);
+            if (AdBlocker.enabled && !AdBlocker.siteAllowed(t.pageHost)) v.evaluateJavascript(COSMETIC_JS, null);
         }
 
         @Override public void onPageFinished(WebView v, String url) {
@@ -711,16 +916,29 @@ public class MainActivity extends Activity {
             if (old != null && url != null && !samePath(old, url) && t.video != null) { t.video = null; if (t == current) updateVideoFab(); }
             t.url = url;
             t.pageUrl = url;
-            if (t == current) { updateOmniDisplay(); updateLock(); }
+            if (t == current) { updateOmniDisplay(); updateLock(); updateBackBtn(); }
         }
 
         @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
             Uri u = r.getUrl();
             String host = u.getHost();
             String url = u.toString();
-            if (!r.isForMainFrame() && AdBlocker.shouldBlock(url, host, t.pageHost)) {
+            if (r.isForMainFrame()) {
+                // Sub-resources of the new page may arrive before onPageStarted runs on the UI thread:
+                // switch the page host here so they are judged against the right site.
+                t.pageHost = host;
+                t.mixed = false;
+                if (isVideoUrl(url)) { String page = t.pageUrl; ui.post(() -> addVideo(t, url, page, null)); }
+                return null;
+            }
+            if (AdBlocker.shouldBlock(url, host, t.pageHost, AdBlocker.typeOf(r))) {
                 t.blocked.incrementAndGet();
                 return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+            }
+            String pu = t.pageUrl;
+            if (pu != null && pu.startsWith("https:") && "http".equals(u.getScheme()) && !t.mixed) {
+                t.mixed = true;
+                ui.post(() -> { if (t == current) updateLock(); });
             }
             if (isVideoUrl(url)) {
                 String page = t.pageUrl;
@@ -731,28 +949,45 @@ public class MainActivity extends Activity {
 
         @Override public void onReceivedSslError(WebView v, SslErrorHandler h, SslError e) {
             if (t != current) { h.cancel(); return; }
-            new AlertDialog.Builder(MainActivity.this)
+            dialog()
                     .setTitle(L.t("Подключение не защищено"))
                     .setMessage(L.t("Сертификат сайта недействителен. Злоумышленники могут попытаться похитить ваши данные.\n\n") + e.getUrl())
                     .setPositiveButton(L.t("Назад к безопасности"), (d, w) -> h.cancel())
-                    .setNegativeButton(L.t("Всё равно перейти"), (d, w) -> h.proceed())
+                    .setNegativeButton(L.t("Всё равно перейти"), (d, w) -> {
+                        try { String hh = Uri.parse(e.getUrl()).getHost(); if (hh != null) t.sslHosts.add(hh.toLowerCase(Locale.ROOT)); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+                        h.proceed();
+                        if (t == current) updateLock();
+                    })
                     .setOnCancelListener(d -> h.cancel())
                     .show();
         }
 
         @Override public boolean onRenderProcessGone(WebView v, RenderProcessGoneDetail d) {
-            String u = t.url;
-            boolean wasCurrent = t == current;
-            boolean inc = t.incognito;
-            closeTab(t);
-            if (wasCurrent && u != null && u.startsWith("http")) { newTab(u, inc, true, null); snack(L.t("Страница перезагружена после сбоя"), null, null); }
+            // The renderer is usually shared by all tabs, so every tab gets this call. Keep each tab and
+            // only recreate its WebView; background tabs reload when they are opened again.
+            if (v != t.web) return true;
+            String u = t.pageUrl != null ? t.pageUrl : t.url;
+            if (customView != null && t == current) hideCustomView();
+            replaceWeb(t);
+            if (u != null && u.startsWith("http")) { t.pendingUrl = u; t.url = u; }
+            if (t == current) {
+                if (t.pendingUrl != null) { String x = t.pendingUrl; t.pendingUrl = null; t.web.loadUrl(x); }
+                snack(L.t("Страница перезагружена после сбоя"), null, null);
+                refreshChrome();
+            }
             return true;
         }
     }
 
-    void injectScripts(Tab t) {
+    void injectScripts(Tab t) { injectScripts(t, true); }
+
+    /** @param force false = skip if the scripts were already injected for this URL (progress ticks). */
+    void injectScripts(Tab t, boolean force) {
         WebView v = t.web;
-        boolean ab = AdBlocker.enabled && (t.pageHost == null || !AdBlocker.whitelist.contains(t.pageHost));
+        String cur = v.getUrl();
+        if (!force && cur != null && cur.equals(t.injectedFor)) return;
+        t.injectedFor = cur;
+        boolean ab = AdBlocker.enabled && (t.pageHost == null || !AdBlocker.siteAllowed(t.pageHost));
         if (ab) v.evaluateJavascript(COSMETIC_JS, null);
         v.evaluateJavascript(VIDEO_JS, null);
         v.evaluateJavascript(PTR_JS, null);
@@ -768,7 +1003,7 @@ public class MainActivity extends Activity {
 
         @Override public void onProgressChanged(WebView v, int p) {
             t.progress = p;
-            if (p >= 30 && p < 100) injectScripts(t);
+            if (p >= 30 && p < 100) injectScripts(t, false);
             if (p >= 100 && t == current && ptrSpinning) ui.postDelayed(() -> { if (ptrSpinning) hidePtr(); }, 250);
             if (t == current) {
                 progress.setProgress(p);
@@ -793,10 +1028,10 @@ public class MainActivity extends Activity {
             fullscreen.addView(view, new FrameLayout.LayoutParams(MATCH, MATCH));
             fullscreen.setVisibility(View.VISIBLE);
             videoFab.setVisibility(View.GONE);
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+            setFullscreenBars(true);
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            boolean portrait = t.mediaW > 0 && t.mediaH > t.mediaW;
+            setRequestedOrientation(portrait ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             notice(R.drawable.ic_fullscreen_exit, L.t("Полноэкранный режим · «Назад» — выход"));
         }
 
@@ -850,6 +1085,7 @@ public class MainActivity extends Activity {
         customView = null;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        setFullscreenBars(false);
         if (customCb != null) customCb.onCustomViewHidden();
         customCb = null;
         refreshChrome();
@@ -874,14 +1110,18 @@ public class MainActivity extends Activity {
         if (req == REQ_WALL) {
             if (res == RESULT_OK && data != null && data.getData() != null) {
                 Uri u = data.getData();
-                new Thread(() -> {
+                BG.execute(() -> {
                     boolean ok = Wallpaper.saveCustom(this, u);
                     ui.post(() -> {
                         if (ok) { store.p.edit().putInt("wp", Wallpaper.CUSTOM).apply(); refreshChrome(); toast(L.t("Обои установлены")); }
                         else toast(L.t("Не удалось открыть изображение"));
                     });
-                }).start();
+                });
             }
+            return;
+        }
+        if (req == REQ_BM_IMPORT || req == REQ_BM_EXPORT) {
+            if (res == RESULT_OK && data != null) onBookmarkFile(req, data.getData());
             return;
         }
         if (req == REQ_FILE) {
@@ -896,9 +1136,27 @@ public class MainActivity extends Activity {
     String toUrl(String s) {
         s = s.trim();
         if (s.isEmpty()) return null;
-        if (s.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*") || s.startsWith("about:") || s.startsWith("javascript:") || s.startsWith("data:")) return s;
-        if (!s.contains(" ") && (s.startsWith("localhost") || (s.contains(".") && Patterns.WEB_URL.matcher(s).matches()))) return "https://" + s;
+        String lo = s.toLowerCase(Locale.ROOT);
+        // Pasted "javascript:" / "data:" links are a classic self-XSS trick: search for them instead of running them.
+        if (lo.startsWith("javascript:") || lo.startsWith("data:")) return store.searchUrl() + Uri.encode(s);
+        if (s.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*") || lo.startsWith("about:")) return s;
+        if (!s.contains(" ") && isLocalAddress(lo)) return "http://" + s;
+        if (!s.contains(" ") && (s.contains(".") && Patterns.WEB_URL.matcher(s).matches())) return "https://" + s;
         return store.searchUrl() + Uri.encode(s);
+    }
+
+    /** localhost, LAN IPs and .local/.lan names usually have no HTTPS: open them over http. */
+    static boolean isLocalAddress(String s) {
+        String h = s;
+        int slash = h.indexOf('/');
+        if (slash >= 0) h = h.substring(0, slash);
+        int colon = h.lastIndexOf(':');
+        if (colon > 0 && h.indexOf(']') < colon) h = h.substring(0, colon);
+        if (h.equals("localhost") || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home.arpa")) return true;
+        if (!h.matches("\\d{1,3}(\\.\\d{1,3}){3}")) return false;
+        String[] p = h.split("\\.");
+        int a = Integer.parseInt(p[0]), b = Integer.parseInt(p[1]);
+        return a == 127 || a == 10 || (a == 192 && b == 168) || (a == 172 && b >= 16 && b <= 31) || (a == 169 && b == 254);
     }
 
     void navigate(String input) {
@@ -948,11 +1206,11 @@ public class MainActivity extends Activity {
                     if ((h.contains("google.") || h.contains("bing.com")) && path.equals("/search")) q = p.getQueryParameter("q");
                     else if ((h.contains("yandex.") || h.equals("ya.ru")) && path.startsWith("/search")) q = p.getQueryParameter("text");
                     else if (h.contains("duckduckgo.com") && (path.isEmpty() || path.equals("/"))) q = p.getQueryParameter("q");
-                } catch (Exception ignored) { }
+                } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                 if (q != null && !q.trim().isEmpty()) return q;
                 return h.startsWith("www.") ? h.substring(4) : h;
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         return u;
     }
 
@@ -964,54 +1222,217 @@ public class MainActivity extends Activity {
         int fg = inc ? Ui.INC_TEXT : Ui.TEXT, fg2 = inc ? Ui.INC_TEXT2 : Ui.TEXT2;
         toolbar.setBackgroundColor(tb);
         findBar.setBackgroundColor(tb);
-        divider.setBackgroundColor(inc ? 0xFF3C4043 : Ui.DIVIDER);
+        divider.setBackgroundColor(inc ? Ui.INC_DIVIDER : Ui.DIVIDER);
         omniPill.setBackground(Ui.round(pill, 22));
         omni.setTextColor(fg);
         omni.setHintTextColor(fg2);
         findInput.setTextColor(fg);
         findInput.setHintTextColor(fg2);
-        Ui.tint(homeBtn, fg2); Ui.tint(menuBtn, fg2); Ui.tint(lockIcon, fg2); Ui.tint(clearBtn, fg2); Ui.tint(micBtn, fg2);
+        Ui.tint(homeBtn, fg2); Ui.tint(backBtn, fg2); Ui.tint(menuBtn, fg2); Ui.tint(lockIcon, fg2); Ui.tint(clearBtn, fg2); Ui.tint(micBtn, fg2);
         tabCount.setTextColor(fg);
         tabCount.setBackground(Ui.stroke(Color.TRANSPARENT, fg, 2, 4));
-        Window win = getWindow();
-        win.setStatusBarColor(tb);
-        win.setNavigationBarColor(inc ? Ui.INC_BG : Ui.BG);
-        if (customView == null) {
-            int flags = 0;
-            if (!inc && !Ui.dark) flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-            win.getDecorView().setSystemUiVisibility(flags);
-        }
-        if (!t.ntp && t.silenced) { t.silenced = false; try { t.web.onResume(); } catch (Exception ignored) { } }
-        ntpHolder.removeAllViews();
-        if (t.ntp) { ntpHolder.addView(buildNtp(inc)); ntpHolder.setVisibility(View.VISIBLE); }
-        else ntpHolder.setVisibility(View.GONE);
+        setSecure(inc || (switcher.getVisibility() == View.VISIBLE && switcherIncognito));
+        int pageBg = inc ? Ui.INC_BG : Ui.BG;
+        boolean bottom = store.bottomBar();
+        setBarColors(stripScroll != null && stripScroll.getVisibility() == View.VISIBLE ? barsBg.top : bottom ? pageBg : tb, bottom ? tb : pageBg);
+        if (customView == null) setLightBars(!inc && !Ui.dark);
+        if (!t.ntp && t.silenced) { t.silenced = false; try { t.web.onResume(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
+        if (t.ntp) {
+            // rebuilding the home page (wallpaper decode, icons, shortcuts) on every chrome refresh was expensive
+            String key = ntpKey(inc);
+            if (!key.equals(ntpCacheKey) || ntpHolder.getChildCount() == 0) {
+                ntpHolder.removeAllViews();
+                ntpHolder.addView(buildNtp(inc));
+                ntpCacheKey = key;
+            } else if (ntpBlockedText != null && AdBlocker.enabled) {
+                ntpBlockedText.setText(L.t("Заблокировано рекламы и трекеров: ") + AdBlocker.totalBlocked.get());
+            }
+            ntpHolder.setVisibility(View.VISIBLE);
+        } else ntpHolder.setVisibility(View.GONE);
         updateOmniDisplay();
         updateLock();
         progress.setProgress(t.progress);
         progress.setVisibility(t.loading && !t.ntp && t.progress < 100 ? View.VISIBLE : View.GONE);
         updateTabCount();
         updateVideoFab();
+        updateOmniButtons();
+    }
+
+    // ---------------------------------------------------------------- system bars (edge-to-edge, Android 15+ ready)
+    WindowInsets lastInsets;
+    boolean lightBars;
+    final BarsDrawable barsBg = new BarsDrawable();
+
+    /** Root background: one color behind the status bar, another behind the navigation bar / below. */
+    static final class BarsDrawable extends android.graphics.drawable.Drawable {
+        int top = Color.WHITE, bottom = Color.WHITE, topH;
+        final android.graphics.Paint p = new android.graphics.Paint();
+        @Override public void draw(Canvas c) {
+            android.graphics.Rect b = getBounds();
+            p.setColor(bottom); c.drawRect(b, p);
+            if (topH > 0) { p.setColor(top); c.drawRect(b.left, b.top, b.right, b.top + topH, p); }
+        }
+        @Override public void setAlpha(int a) { }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.OPAQUE; }
+    }
+
+    void setBarColors(int top, int bottom) {
+        if (barsBg.top == top && barsBg.bottom == bottom) return;
+        barsBg.top = top; barsBg.bottom = bottom;
+        barsBg.invalidateSelf();
+    }
+
+    static final int LAYOUT_FLAGS = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+
+    /** Draws behind the system bars on every Android version; the root view is padded by the insets instead. */
+    void setupEdgeToEdge() {
+        Window w = getWindow();
+        edgeToEdgeWindow(w);
+        root.setBackground(barsBg);
+        root.setOnApplyWindowInsetsListener((v, ins) -> { lastInsets = ins; applyInsets(); return ins; });
+        root.requestApplyInsets();
+    }
+
+    @SuppressWarnings("deprecation")
+    static void edgeToEdgeWindow(Window w) {
+        if (Build.VERSION.SDK_INT >= 30) w.setDecorFitsSystemWindows(false);
+        else w.getDecorView().setSystemUiVisibility(LAYOUT_FLAGS);
+        w.setStatusBarColor(Color.TRANSPARENT);
+        w.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 29) { w.setNavigationBarContrastEnforced(false); w.setStatusBarContrastEnforced(false); }
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams a = w.getAttributes();
+            a.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            w.setAttributes(a);
+        }
+    }
+
+    /** Full-screen dialogs get the same treatment: content padded by the bars, bars tinted by the background. */
+    void edgeToEdge(Window w, View content, int bg, boolean light) {
+        edgeToEdgeWindow(w);
+        w.getDecorView().setBackgroundColor(bg);
+        setLightBars(w, light);
+        content.setOnApplyWindowInsetsListener((v, ins) -> {
+            int[] p = insetsOf(ins);
+            v.setPadding(p[0], p[1], p[2], p[3]);
+            return ins;
+        });
+    }
+
+    /** {left, top, right, bottom} of system bars + cutout, bottom including the keyboard. */
+    @SuppressWarnings("deprecation")
+    static int[] insetsOf(WindowInsets ins) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.graphics.Insets s = ins.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+            android.graphics.Insets ime = ins.getInsets(WindowInsets.Type.ime());
+            return new int[]{s.left, s.top, s.right, Math.max(s.bottom, ime.bottom)};
+        }
+        return new int[]{ins.getSystemWindowInsetLeft(), ins.getSystemWindowInsetTop(), ins.getSystemWindowInsetRight(), ins.getSystemWindowInsetBottom()};
+    }
+
+    void applyInsets() {
+        if (lastInsets == null || root == null) return;
+        int[] p = insetsOf(lastInsets);
+        boolean full = customView != null || (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode());
+        if (full) root.setPaddingRelative(0, 0, 0, 0);
+        else root.setPadding(p[0], p[1], p[2], p[3]);
+        int th = full ? 0 : p[1];
+        if (barsBg.topH != th) { barsBg.topH = th; barsBg.invalidateSelf(); }
+    }
+
+    void setLightBars(boolean light) { lightBars = light; setLightBars(getWindow(), light); }
+
+    @SuppressWarnings("deprecation")
+    static void setLightBars(Window w, boolean light) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = w.getInsetsController();
+            if (c == null) return;
+            int m = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            c.setSystemBarsAppearance(light ? m : 0, m);
+        } else {
+            w.getDecorView().setSystemUiVisibility(LAYOUT_FLAGS | (light ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        }
+    }
+
+    /** Hides the system bars for full-screen video (swipe shows them temporarily). */
+    @SuppressWarnings("deprecation")
+    void setFullscreenBars(boolean on) {
+        Window w = getWindow();
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = w.getInsetsController();
+            if (c != null) {
+                if (on) { c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); c.hide(WindowInsets.Type.systemBars()); }
+                else c.show(WindowInsets.Type.systemBars());
+            }
+        } else if (on) {
+            w.getDecorView().setSystemUiVisibility(LAYOUT_FLAGS | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+        } else setLightBars(w, lightBars);
+        applyInsets();
+    }
+
+    /** Incognito content must not appear in screenshots or in the recent-apps preview. */
+    void setSecure(boolean on) {
+        if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }
 
     void updateOmniDisplay() {
         if (omni.hasFocus() || current == null) return;
-        if (current.ntp) omni.setText("");
-        else { String u = current.web.getUrl(); omni.setText(displayUrl(u != null ? u : current.url)); }
+        if (current.ntp) { omni.setText(""); return; }
+        String u = current.web.getUrl();
+        if (u == null) u = current.url;
+        String d = displayUrl(u);
+        String h = hostOf(u);
+        if (h != null && h.startsWith("www.")) h = h.substring(4);
+        if (h != null && d.equals(h)) {
+            // Phishing hosts like "bank.com.login.evil.ru" must not hide the real site: the registrable domain
+            // is always shown in full and highlighted; extra subdomains are dimmed and cut from the left.
+            String reg = Psl.registrable(h);
+            if (reg == null) reg = AdBlocker.base(h);
+            String sub = h.length() > reg.length() ? h.substring(0, h.length() - reg.length()) : "";
+            if (sub.length() > 18) sub = "…" + sub.substring(sub.length() - 17);
+            android.text.SpannableString ss = new android.text.SpannableString(sub + reg);
+            int dim = current.incognito ? Ui.INC_TEXT2 : Ui.TEXT2;
+            if (!sub.isEmpty()) ss.setSpan(new android.text.style.ForegroundColorSpan(dim), 0, sub.length(), 0);
+            omni.setText(ss);
+        } else omni.setText(d);
+        omni.setContentDescription(L.t("Адрес: ") + (h != null ? h : d));
+    }
+
+    /** 0 = no page, 1 = secure, 2 = insecure (http, accepted bad certificate or mixed content). */
+    int security(Tab t) {
+        if (t == null || t.ntp) return 0;
+        String u = t.web.getUrl() != null ? t.web.getUrl() : t.url;
+        if (u == null || u.isEmpty()) return 0;
+        if (!u.startsWith("https://")) return u.startsWith("http://") ? 2 : 0;
+        String h = hostOf(u);
+        if (h != null && t.sslHosts.contains(h.toLowerCase(Locale.ROOT))) return 2;
+        return t.mixed ? 2 : 1;
     }
 
     void updateLock() {
         if (current == null) return;
-        String u = current.ntp ? null : (current.web.getUrl() != null ? current.web.getUrl() : current.url);
-        if (u == null || u.isEmpty()) lockIcon.setImageResource(R.drawable.ic_search);
-        else if (u.startsWith("https://")) lockIcon.setImageResource(R.drawable.ic_lock);
-        else lockIcon.setImageResource(R.drawable.ic_info);
+        int sec = security(current);
+        String u = current.ntp ? null : current.web.getUrl();
+        boolean badCert = sec == 2 && u != null && u.startsWith("https://") && !current.mixed;
+        int fg2 = current.incognito ? Ui.INC_TEXT2 : Ui.TEXT2;
+        if (sec == 0) { lockIcon.setImageResource(R.drawable.ic_search); Ui.tint(lockIcon, fg2); lockIcon.setContentDescription(L.t("Поиск")); }
+        else if (sec == 1) { lockIcon.setImageResource(R.drawable.ic_lock); Ui.tint(lockIcon, fg2); lockIcon.setContentDescription(L.t("Подключение защищено")); }
+        else {
+            lockIcon.setImageResource(R.drawable.ic_info);
+            Ui.tint(lockIcon, badCert ? (Ui.dark || current.incognito ? 0xFFF28B82 : 0xFFD93025) : fg2);
+            lockIcon.setContentDescription(L.t("Подключение не защищено"));
+        }
     }
 
     void updateTabCount() {
         if (current == null) return;
         int n = 0;
         for (Tab t : tabs) if (t.incognito == current.incognito) n++;
-        tabCount.setText(n > 99 ? ":)" : String.valueOf(n));
+        tabCount.setText(n > 99 ? "99+" : String.valueOf(n));
+        tabCount.setTextSize(TypedValue.COMPLEX_UNIT_SP, n > 99 ? 9 : 12);
+        tabBtn.setContentDescription(L.t("Вкладки: ") + n);
         refreshStrip();
     }
 
@@ -1036,7 +1457,7 @@ public class MainActivity extends Activity {
         int stripBg = inc ? 0xFF111214 : Ui.dark ? (Ui.amoled ? 0xFF161616 : 0xFF131416) : 0xFFDEE1E6;
         int fg = inc ? Ui.INC_TEXT : Ui.TEXT, fg2 = inc ? Ui.INC_TEXT2 : Ui.TEXT2;
         stripScroll.setBackgroundColor(stripBg);
-        getWindow().setStatusBarColor(stripBg);
+        setBarColors(stripBg, barsBg.bottom);
         stripRow.removeAllViews();
         ArrayList<Tab> list = new ArrayList<>();
         for (Tab t : tabs) if (t.incognito == inc) list.add(t);
@@ -1048,7 +1469,7 @@ public class MainActivity extends Activity {
             boolean on = t == current;
             LinearLayout item = new LinearLayout(this);
             item.setGravity(Gravity.CENTER_VERTICAL);
-            item.setPadding(dp(12), 0, dp(2), 0);
+            item.setPaddingRelative(dp(12), 0, dp(2), 0);
             if (on) {
                 GradientDrawable g = new GradientDrawable();
                 g.setColor(tb);
@@ -1069,19 +1490,19 @@ public class MainActivity extends Activity {
                 ic = fi;
             } else {
                 String u = t.pendingUrl != null ? t.pendingUrl : t.web.getUrl() != null ? t.web.getUrl() : t.url;
-                ic = tileIcon(t.title != null && !t.title.isEmpty() ? t.title : String.valueOf(u), u, false, 0, 18);
+                ic = tileIcon(t.title != null && !t.title.isEmpty() ? t.title : String.valueOf(u), u, false, 0, 18, !t.incognito);
             }
             item.addView(ic, new LinearLayout.LayoutParams(dp(18), dp(18)));
             String title = t.ntp ? L.t("Новая вкладка") : (t.title != null && !t.title.isEmpty() ? t.title : displayUrl(t.web.getUrl() != null ? t.web.getUrl() : t.url));
             TextView tv = Ui.single(this, title, 13, on ? fg : fg2);
-            tv.setPadding(dp(10), 0, dp(4), 0);
+            tv.setPaddingRelative(dp(10), 0, dp(4), 0);
             tv.setHorizontalFadingEdgeEnabled(true);
             tv.setFadingEdgeLength(dp(16));
             tv.setEllipsize(null);
             item.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
             ImageView x = Ui.iconBtn(this, R.drawable.ic_close, fg2);
             x.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            x.setPadding(dp(8), dp(8), dp(8), dp(8));
+            x.setPaddingRelative(dp(8), dp(8), dp(8), dp(8));
             x.setOnClickListener(v -> closeTabs(one(t)));
             item.addView(x, new LinearLayout.LayoutParams(dp(32), dp(32)));
             item.setOnClickListener(v -> { if (t != current) { if (switcher.getVisibility() == View.VISIBLE) hideSwitcher(); selectTab(t); } });
@@ -1100,11 +1521,11 @@ public class MainActivity extends Activity {
         }
         ImageView plus = Ui.iconBtn(this, R.drawable.ic_add, fg2);
         plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        plus.setPadding(dp(9), dp(9), dp(9), dp(9));
+        plus.setPaddingRelative(dp(9), dp(9), dp(9), dp(9));
         plus.setOnClickListener(v -> { if (switcher.getVisibility() == View.VISIBLE) hideSwitcher(); newTab(null, inc, true, null); });
         LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(dp(38), dp(38));
         pl.gravity = Gravity.CENTER_VERTICAL;
-        pl.leftMargin = dp(4);
+        pl.setMarginStart(dp(4));
         pl.bottomMargin = dp(2);
         stripRow.addView(plus, pl);
         final View fsel = sel;
@@ -1122,9 +1543,12 @@ public class MainActivity extends Activity {
     static final int[] TILE_COLORS = {0, 0xFF1A73E8, 0xFFD93025, 0xFF188038, 0xFFF9AB00, 0xFF9334E6, 0xFF007B83, 0xFFE8710A, 0xFF5F6368};
 
     /** Round shortcut icon: site favicon on a soft circle, or a colored letter. */
-    FrameLayout tileIcon(String title, String url, boolean letter, int color, int size) {
+    FrameLayout tileIcon(String title, String url, boolean letter, int color, int size) { return tileIcon(title, url, letter, color, size, true); }
+
+    /** @param net false for incognito tabs: never ask icon services about the sites they visit. */
+    FrameLayout tileIcon(String title, String url, boolean letter, int color, int size, boolean net) {
         FrameLayout f = new FrameLayout(this);
-        int bg = color != 0 ? color : (Ui.dark ? 0xFF3C4043 : 0xFFF1F3F4);
+        int bg = color != 0 ? color : (Ui.CHIP);
         f.setBackground(Ui.oval(bg));
         TextView lt = new TextView(this);
         String l = title == null || title.trim().isEmpty() ? "?" : title.trim().substring(0, 1).toUpperCase();
@@ -1139,10 +1563,25 @@ public class MainActivity extends Activity {
             iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
             int is = dp(size * 0.52f);
             f.addView(iv, new FrameLayout.LayoutParams(is, is, Gravity.CENTER));
-            Bitmap b = IconCache.get(this, url, bm -> { iv.setImageBitmap(bm); lt.setVisibility(View.GONE); });
+            Bitmap b = IconCache.get(this, url, bm -> { iv.setImageBitmap(bm); lt.setVisibility(View.GONE); }, net);
             if (b != null) { iv.setImageBitmap(b); lt.setVisibility(View.GONE); }
         }
         return f;
+    }
+
+    String ntpCacheKey;
+    TextView ntpBlockedText;
+
+    String ntpKey(boolean inc) {
+        StringBuilder k = new StringBuilder();
+        int wp = store.p.getInt("wp", Wallpaper.NONE);
+        k.append(inc).append('|').append(ntpEdit).append('|').append(scrWpx()).append('x').append(scrHpx()).append('|').append(wp)
+                .append(':').append(wp == Wallpaper.CUSTOM ? Wallpaper.customFile(this).lastModified() : 0)
+                .append('|').append(Ui.mode).append(Ui.accent).append(Ui.dark).append('|').append(AdBlocker.enabled).append('|').append(L.t("Закладки"));
+        for (Store.Item it : store.shortcuts) k.append('|').append(it.t).append(' ').append(it.u).append(' ').append(it.c).append(it.letter);
+        int n = 0;
+        for (Store.Item it : store.history) { if (n++ >= 4) break; k.append('#').append(it.t).append(' ').append(it.u); }
+        return k.toString();
     }
 
     View buildNtp(boolean inc) {
@@ -1157,7 +1596,7 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER_HORIZONTAL);
         int side = Math.max(dp(16), (scrW - dp(680)) / 2);
-        col.setPadding(side, dp(40), side, dp(32));
+        col.setPaddingRelative(side, dp(40), side, dp(32));
         sv.addView(col, new FrameLayout.LayoutParams(MATCH, WRAP));
         if (inc) {
             FrameLayout ring = new FrameLayout(this);
@@ -1170,22 +1609,28 @@ public class MainActivity extends Activity {
             col.addView(ring, rl);
             TextView h = Ui.medium(Ui.text(this, L.t("Вы в режиме инкогнито"), 24, Ui.INC_TEXT));
             h.setGravity(Gravity.CENTER);
-            h.setPadding(0, dp(24), 0, dp(16));
+            h.setPaddingRelative(0, dp(24), 0, dp(16));
             col.addView(h);
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(20), dp(16), dp(20), dp(16));
+            card.setPaddingRelative(dp(20), dp(16), dp(20), dp(16));
             card.setBackground(Ui.round(0xFF2D2E31, 16));
-            String[][] pts = {{L.t("Не сохраняется"), L.t("история просмотров, кэш, данные форм")},
+            String[][] pts = {{L.t("Не сохраняется"), incProfile() ? L.t("история, cookies, данные сайтов и форм — всё удаляется, когда закрыта последняя вкладка инкогнито")
+                    : L.t("история просмотров, кэш, данные форм")},
                     {L.t("Сохраняется"), L.t("скачанные файлы и закладки")},
                     {L.t("Закрытие"), L.t("все вкладки инкогнито закрываются кнопкой в переключателе вкладок")}};
             for (String[] p : pts) {
                 TextView a = Ui.medium(Ui.text(this, p[0], 14, Ui.INC_TEXT));
                 TextView b = Ui.text(this, p[1], 14, Ui.INC_TEXT2);
-                b.setPadding(0, dp(2), 0, dp(12));
+                b.setPaddingRelative(0, dp(2), 0, dp(12));
                 card.addView(a); card.addView(b);
             }
             col.addView(card, new LinearLayout.LayoutParams(MATCH, WRAP));
+            if (!incProfile()) {
+                TextView w = Ui.text(this, L.t("⚠ Ваша версия Android System WebView не умеет отделять cookies инкогнито: сайты, где вы вошли в обычных вкладках, узнают вас и здесь. Обновите Android System WebView в Google Play."), 13, 0xFFFDD663);
+                w.setPaddingRelative(dp(4), dp(16), dp(4), 0);
+                col.addView(w, new LinearLayout.LayoutParams(MATCH, WRAP));
+            }
             return sv;
         }
 
@@ -1202,12 +1647,12 @@ public class MainActivity extends Activity {
         // search box
         LinearLayout pill = new LinearLayout(this);
         pill.setGravity(Gravity.CENTER_VERTICAL);
-        pill.setPadding(dp(18), 0, dp(10), 0);
-        pill.setBackground(Ui.round(Ui.dark ? (Ui.amoled ? 0xFF1F1F1F : 0xFF303134) : Color.WHITE, 28));
+        pill.setPaddingRelative(dp(18), 0, dp(10), 0);
+        pill.setBackground(Ui.round(Ui.NTP_PILL, 28));
         pill.setElevation(dp(Ui.dark ? 0 : 3));
         pill.addView(Ui.icon(this, R.drawable.ic_search, Ui.TEXT2), new LinearLayout.LayoutParams(dp(24), dp(24)));
         TextView hint = Ui.single(this, L.t("Введите запрос или URL"), 16, Ui.TEXT2);
-        hint.setPadding(dp(14), 0, 0, 0);
+        hint.setPaddingRelative(dp(14), 0, 0, 0);
         pill.addView(hint, new LinearLayout.LayoutParams(0, WRAP, 1));
         ImageView mic = Ui.iconBtn(this, R.drawable.ic_mic, Ui.TEXT2);
         mic.setOnClickListener(v -> voiceSearch());
@@ -1230,16 +1675,16 @@ public class MainActivity extends Activity {
         // shortcuts card
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setPadding(dp(4), dp(8), dp(4), dp(8));
+        grid.setPaddingRelative(dp(4), dp(8), dp(4), dp(8));
         if (ntpEdit) grid.setBackground(Ui.stroke(ntpCard(), Ui.ACCENT, 1.5f, 20));
         if (ntpEdit) {
             LinearLayout hdr = new LinearLayout(this);
             hdr.setGravity(Gravity.CENTER_VERTICAL);
-            hdr.setPadding(dp(14), 0, dp(4), dp(4));
+            hdr.setPaddingRelative(dp(14), 0, dp(4), dp(4));
             TextView ht = Ui.text(this, L.t("Нажмите, чтобы изменить. Удерживайте и перетащите, чтобы переместить."), 12, Ui.TEXT2);
             hdr.addView(ht, new LinearLayout.LayoutParams(0, WRAP, 1));
             TextView done = Ui.medium(Ui.text(this, L.t("Готово"), 14, Ui.ACCENT));
-            done.setPadding(dp(12), dp(10), dp(12), dp(10));
+            done.setPaddingRelative(dp(12), dp(10), dp(12), dp(10));
             done.setBackground(Ui.ripple(this, true));
             done.setOnClickListener(v -> { ntpEdit = false; refreshChrome(); });
             hdr.addView(done);
@@ -1259,12 +1704,12 @@ public class MainActivity extends Activity {
         // ad-block stats
         LinearLayout chip = new LinearLayout(this);
         chip.setGravity(Gravity.CENTER_VERTICAL);
-        chip.setPadding(dp(14), dp(8), dp(16), dp(8));
+        chip.setPaddingRelative(dp(14), dp(8), dp(16), dp(8));
         chip.setBackground(Ui.round(Ui.dark ? 0xFF1E3A2B : 0xFFE6F4EA, 18));
         chip.addView(Ui.icon(this, R.drawable.ic_shield, Ui.dark ? 0xFF81C995 : 0xFF188038), new LinearLayout.LayoutParams(dp(18), dp(18)));
-        TextView ct = Ui.text(this, AdBlocker.enabled ? L.t("Заблокировано рекламы и трекеров: ") + AdBlocker.totalBlocked.get() : L.t("Блокировка рекламы выключена"), 13,
+        TextView ct = ntpBlockedText = Ui.text(this, AdBlocker.enabled ? L.t("Заблокировано рекламы и трекеров: ") + AdBlocker.totalBlocked.get() : L.t("Блокировка рекламы выключена"), 13,
                 Ui.dark ? 0xFF81C995 : 0xFF137333);
-        ct.setPadding(dp(8), 0, 0, 0);
+        ct.setPaddingRelative(dp(8), 0, 0, 0);
         chip.addView(ct);
         chip.setOnClickListener(v -> showAdblock());
         LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(WRAP, WRAP);
@@ -1277,14 +1722,14 @@ public class MainActivity extends Activity {
         if (!recent.isEmpty() && !ntpEdit) {
             LinearLayout rc = new LinearLayout(this);
             rc.setOrientation(LinearLayout.VERTICAL);
-            rc.setPadding(0, dp(6), 0, dp(6));
+            rc.setPaddingRelative(0, dp(6), 0, dp(6));
             rc.setBackground(Ui.round(ntpCard(), 20));
             LinearLayout rh = new LinearLayout(this);
             rh.setGravity(Gravity.CENTER_VERTICAL);
-            rh.setPadding(dp(18), dp(6), dp(4), 0);
+            rh.setPaddingRelative(dp(18), dp(6), dp(4), 0);
             rh.addView(Ui.medium(Ui.text(this, L.t("Недавние"), 15, Ui.TEXT)), new LinearLayout.LayoutParams(0, WRAP, 1));
             TextView all = Ui.medium(Ui.text(this, L.t("История"), 13, Ui.ACCENT));
-            all.setPadding(dp(12), dp(8), dp(12), dp(8));
+            all.setPaddingRelative(dp(12), dp(8), dp(12), dp(8));
             all.setBackground(Ui.ripple(this, true));
             all.setOnClickListener(v -> showHistory());
             rh.addView(all);
@@ -1292,12 +1737,12 @@ public class MainActivity extends Activity {
             for (Store.Item it : recent) {
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(8), dp(16), dp(8));
+                r.setPaddingRelative(dp(16), dp(8), dp(16), dp(8));
                 r.setBackground(Ui.ripple(this, false));
                 r.addView(tileIcon(it.t, it.u, false, 0, 36), new LinearLayout.LayoutParams(dp(36), dp(36)));
                 LinearLayout tx = new LinearLayout(this);
                 tx.setOrientation(LinearLayout.VERTICAL);
-                tx.setPadding(dp(14), 0, 0, 0);
+                tx.setPaddingRelative(dp(14), 0, 0, 0);
                 tx.addView(Ui.single(this, it.t, 14, Ui.TEXT));
                 tx.addView(Ui.single(this, displayUrl(it.u), 12, Ui.TEXT2));
                 r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
@@ -1316,7 +1761,7 @@ public class MainActivity extends Activity {
         LinearLayout tile = new LinearLayout(this);
         tile.setOrientation(LinearLayout.VERTICAL);
         tile.setGravity(Gravity.CENTER_HORIZONTAL);
-        tile.setPadding(dp(2), dp(10), dp(2), dp(10));
+        tile.setPaddingRelative(dp(2), dp(10), dp(2), dp(10));
         tile.setBackground(Ui.ripple(this, false));
         FrameLayout f = new FrameLayout(this);
         f.setBackground(ntpOnWall ? Ui.stroke(0x33FFFFFF, 0xCCFFFFFF, 1.5f, 28) : Ui.stroke(Color.TRANSPARENT, Ui.dark ? 0xFF5F6368 : 0xFFDADCE0, 1.5f, 28));
@@ -1325,7 +1770,7 @@ public class MainActivity extends Activity {
         TextView lbl = Ui.single(this, L.t("Добавить"), 12, ntpOnWall ? Color.WHITE : Ui.TEXT2);
         if (ntpOnWall) lbl.setShadowLayer(dp(4), 0, dp(1), 0x99000000);
         lbl.setGravity(Gravity.CENTER);
-        lbl.setPadding(0, dp(8), 0, 0);
+        lbl.setPaddingRelative(0, dp(8), 0, 0);
         tile.addView(lbl, new LinearLayout.LayoutParams(MATCH, WRAP));
         tile.setOnClickListener(v -> editShortcut(-1, true));
         return tile;
@@ -1335,7 +1780,7 @@ public class MainActivity extends Activity {
         LinearLayout tile = new LinearLayout(this);
         tile.setOrientation(LinearLayout.VERTICAL);
         tile.setGravity(Gravity.CENTER_HORIZONTAL);
-        tile.setPadding(dp(2), dp(10), dp(2), dp(10));
+        tile.setPaddingRelative(dp(2), dp(10), dp(2), dp(10));
         tile.setBackground(Ui.ripple(this, false));
         FrameLayout wrap = new FrameLayout(this);
         FrameLayout icon = tileIcon(it.t, it.u, it.letter, it.c, 56);
@@ -1347,7 +1792,7 @@ public class MainActivity extends Activity {
             x.addView(Ui.icon(this, R.drawable.ic_close, Ui.dark ? 0xFF202124 : Color.WHITE), new FrameLayout.LayoutParams(MATCH, MATCH));
             ImageView xi = (ImageView) x.getChildAt(0);
             xi.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            xi.setPadding(dp(3), dp(3), dp(3), dp(3));
+            xi.setPaddingRelative(dp(3), dp(3), dp(3), dp(3));
             x.setOnClickListener(v -> deleteShortcut(idx));
             wrap.addView(x, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.END));
             icon.animate().scaleX(0.9f).scaleY(0.9f).setDuration(150).start();
@@ -1356,7 +1801,7 @@ public class MainActivity extends Activity {
         TextView lbl = Ui.single(this, it.t, 12, ntpOnWall && !ntpEdit ? Color.WHITE : Ui.TEXT);
         if (ntpOnWall && !ntpEdit) lbl.setShadowLayer(dp(4), 0, dp(1), 0x99000000);
         lbl.setGravity(Gravity.CENTER);
-        lbl.setPadding(dp(2), dp(6), dp(2), 0);
+        lbl.setPaddingRelative(dp(2), dp(6), dp(2), 0);
         tile.addView(lbl, new LinearLayout.LayoutParams(MATCH, WRAP));
         tile.setOnClickListener(v -> { if (ntpEdit) editShortcut(idx, false); else navigate(it.u); });
         tile.setOnLongClickListener(v -> {
@@ -1390,7 +1835,7 @@ public class MainActivity extends Activity {
     }
 
     void shortcutMenu(Store.Item it, int idx) {
-        new AlertDialog.Builder(this).setTitle(it.t)
+        dialog().setTitle(it.t)
                 .setItems(new String[]{L.t("Открыть в новой вкладке"), L.t("Открыть в режиме инкогнито"), L.t("Изменить ярлык"), L.t("Удалить"), L.t("Упорядочить ярлыки")}, (d, w) -> {
                     if (w == 0) newTab(it.u, false, true, null);
                     else if (w == 1) newTab(it.u, true, true, null);
@@ -1417,7 +1862,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(24), dp(12), dp(24), 0);
+        box.setPaddingRelative(dp(24), dp(12), dp(24), 0);
         sv.addView(box);
         FrameLayout preview = new FrameLayout(this);
         LinearLayout.LayoutParams pvl = new LinearLayout.LayoutParams(dp(72), dp(72));
@@ -1437,18 +1882,18 @@ public class MainActivity extends Activity {
         box.addView(url);
 
         TextView il = Ui.medium(Ui.text(this, L.t("Значок"), 13, Ui.ACCENT));
-        il.setPadding(0, dp(16), 0, dp(8));
+        il.setPaddingRelative(0, dp(16), 0, dp(8));
         box.addView(il);
         LinearLayout modes = new LinearLayout(this);
         TextView mSite = chip(L.t("Значок сайта")), mLetter = chip(L.t("Буква"));
         LinearLayout.LayoutParams ml = new LinearLayout.LayoutParams(WRAP, WRAP);
-        ml.rightMargin = dp(8);
+        ml.setMarginEnd(dp(8));
         modes.addView(mSite, ml);
         modes.addView(mLetter, ml);
         box.addView(modes);
 
         TextView cl = Ui.medium(Ui.text(this, L.t("Цвет фона"), 13, Ui.ACCENT));
-        cl.setPadding(0, dp(16), 0, dp(8));
+        cl.setPaddingRelative(0, dp(16), 0, dp(8));
         box.addView(cl);
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
@@ -1456,7 +1901,7 @@ public class MainActivity extends Activity {
         hs.addView(colors);
         box.addView(hs);
         TextView refresh = Ui.medium(Ui.text(this, L.t("Обновить значок сайта"), 14, Ui.ACCENT));
-        refresh.setPadding(0, dp(16), 0, dp(8));
+        refresh.setPaddingRelative(0, dp(16), 0, dp(8));
         box.addView(refresh);
 
         final Runnable[] update = new Runnable[1];
@@ -1470,7 +1915,7 @@ public class MainActivity extends Activity {
             colors.removeAllViews();
             for (int c : TILE_COLORS) {
                 FrameLayout sw = new FrameLayout(this);
-                int fill = c != 0 ? c : (Ui.dark ? 0xFF3C4043 : 0xFFF1F3F4);
+                int fill = c != 0 ? c : (Ui.CHIP);
                 sw.setBackground(c == color[0] ? Ui.stroke(fill, Ui.TEXT, 3, 20) : Ui.stroke(fill, Ui.dark ? 0xFF5F6368 : 0xFFDADCE0, 1, 20));
                 if (c == 0) {
                     TextView a = Ui.text(this, "A", 13, Ui.TEXT2);
@@ -1479,7 +1924,7 @@ public class MainActivity extends Activity {
                 }
                 sw.setOnClickListener(v -> { color[0] = c; update[0].run(); });
                 LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(36), dp(36));
-                sl.rightMargin = dp(10);
+                sl.setMarginEnd(dp(10));
                 colors.addView(sw, sl);
             }
         };
@@ -1498,7 +1943,7 @@ public class MainActivity extends Activity {
         name.addTextChangedListener(tw);
         url.addTextChangedListener(tw);
 
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(src != null ? L.t("Изменить ярлык") : L.t("Новый ярлык")).setView(sv)
+        AlertDialog.Builder b = dialog().setTitle(src != null ? L.t("Изменить ярлык") : L.t("Новый ярлык")).setView(sv)
                 .setPositiveButton(L.t("Сохранить"), (d, w) -> {
                     String u = toUrl(url.getText().toString());
                     if (u == null) { toast(L.t("Введите адрес сайта")); return; }
@@ -1517,7 +1962,7 @@ public class MainActivity extends Activity {
 
     TextView chip(String s) {
         TextView t = Ui.medium(Ui.text(this, s, 14, Ui.TEXT));
-        t.setPadding(dp(16), dp(8), dp(16), dp(8));
+        t.setPaddingRelative(dp(16), dp(8), dp(16), dp(8));
         return t;
     }
 
@@ -1555,9 +2000,9 @@ public class MainActivity extends Activity {
         final boolean inc = switcherIncognito;
         int bg = inc ? Ui.INC_BG : Ui.SWITCHER_BG, fg = inc ? Ui.INC_TEXT : Ui.TEXT, fg2 = inc ? Ui.INC_TEXT2 : Ui.TEXT2;
         switcher.setBackgroundColor(bg);
-        getWindow().setStatusBarColor(bg);
-        getWindow().setNavigationBarColor(bg);
-        getWindow().getDecorView().setSystemUiVisibility(!inc && !Ui.dark ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0);
+        setSecure(inc || (current != null && current.incognito));
+        setBarColors(bg, bg);
+        setLightBars(!inc && !Ui.dark);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         switcher.addView(col, new FrameLayout.LayoutParams(MATCH, MATCH));
@@ -1570,7 +2015,7 @@ public class MainActivity extends Activity {
         int nNorm = 0, nInc = 0;
         for (Tab t : tabs) if (t.incognito) nInc++; else nNorm++;
         LinearLayout seg = new LinearLayout(this);
-        seg.setPadding(dp(3), dp(3), dp(3), dp(3));
+        seg.setPaddingRelative(dp(3), dp(3), dp(3), dp(3));
         seg.setBackground(Ui.round(inc ? 0xFF303134 : (Ui.dark ? 0xFF303134 : 0xFFE1E5EA), 22));
         int selBg = inc ? 0xFF5F6368 : (Ui.dark ? Ui.TONAL : Color.WHITE);
         FrameLayout sN = new FrameLayout(this);
@@ -1625,7 +2070,7 @@ public class MainActivity extends Activity {
             ei.setScaleType(ImageView.ScaleType.FIT_CENTER);
             e.addView(ei, new LinearLayout.LayoutParams(dp(56), dp(56)));
             TextView et = Ui.text(this, inc ? L.t("Нет вкладок инкогнито") : L.t("Нет открытых вкладок"), 16, fg2);
-            et.setPadding(0, dp(16), 0, 0);
+            et.setPaddingRelative(0, dp(16), 0, 0);
             e.addView(et);
             body.addView(e, new FrameLayout.LayoutParams(MATCH, MATCH));
         } else {
@@ -1637,7 +2082,7 @@ public class MainActivity extends Activity {
             int sw = scrWpx();
             int cols = Math.max(2, Math.min(4, (int) (sw / Ui.density / 320)));
             int side = dp(10);
-            grid.setPadding(side, dp(4), side, dp(110));
+            grid.setPaddingRelative(side, dp(4), side, dp(110));
             sv.addView(grid);
             body.addView(sv, new FrameLayout.LayoutParams(MATCH, MATCH));
             int cardW = (sw - side * 2) / cols - dp(12);
@@ -1648,22 +2093,35 @@ public class MainActivity extends Activity {
             switcherAnim = false;
             LinearLayout row = null;
             int selPos = 0;
+            // cards (with their thumbnails) are created lazily for the rows near the viewport
+            final FrameLayout[] holders = new FrameLayout[list.size()];
             for (int i = 0; i < list.size(); i++) {
                 if (i % cols == 0) { row = new LinearLayout(this); grid.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP)); }
-                Tab t = list.get(i);
-                if (t == current) selPos = i / cols;
+                if (list.get(i) == current) selPos = i / cols;
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, cardH, 1);
                 lp.setMargins(dp(6), dp(6), dp(6), dp(6));
-                final View card = tabCard(t, inc, fg, fg2);
-                row.addView(card, lp);
-                if (anim) {
-                    card.setAlpha(0f);
-                    card.setTranslationY(dp(18));
-                    card.animate().alpha(1f).translationY(0).setStartDelay(Math.min(i, 12) * 22L).setDuration(220)
-                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                            .withEndAction(() -> card.animate().setStartDelay(0)).start();
-                }
+                holders[i] = new FrameLayout(this);
+                row.addView(holders[i], lp);
             }
+            final int rowH = cardH + dp(12), nCols = cols;
+            final int viewRows = Math.max(3, scrHpx() / Math.max(1, rowH) + 2);
+            final java.util.function.IntConsumer fillRows = firstRow -> {
+                int lo = Math.max(0, (firstRow - 1) * nCols), hi = Math.min(list.size(), (firstRow + viewRows + 1) * nCols);
+                for (int i = lo; i < hi; i++) {
+                    if (holders[i].getChildCount() > 0) continue;
+                    final View card = tabCard(list.get(i), inc, fg, fg2);
+                    holders[i].addView(card, new FrameLayout.LayoutParams(MATCH, MATCH));
+                    if (anim) {
+                        card.setAlpha(0f);
+                        card.setTranslationY(dp(18));
+                        card.animate().alpha(1f).translationY(0).setStartDelay(Math.min(i - lo, 12) * 22L).setDuration(220)
+                                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                                .withEndAction(() -> card.animate().setStartDelay(0)).start();
+                    }
+                }
+            };
+            fillRows.accept(Math.max(0, selPos - 1));
+            sv.setOnScrollChangeListener((v, x, y, ox, oy) -> fillRows.accept(y / Math.max(1, rowH)));
             if (list.size() % cols != 0) for (int k = list.size() % cols; k < cols; k++) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, cardH, 1);
                 lp.setMargins(dp(6), dp(6), dp(6), dp(6));
@@ -1676,13 +2134,13 @@ public class MainActivity extends Activity {
         // floating "new tab" button
         LinearLayout fab = new LinearLayout(this);
         fab.setGravity(Gravity.CENTER_VERTICAL);
-        fab.setPadding(dp(18), 0, dp(22), 0);
+        fab.setPaddingRelative(dp(18), 0, dp(22), 0);
         int fabBg = inc ? 0xFF5F6368 : Ui.TONAL, fabFg = inc ? Color.WHITE : Ui.ON_TONAL;
         fab.setBackground(Ui.round(fabBg, 18));
         fab.setElevation(dp(6));
         fab.addView(Ui.icon(this, R.drawable.ic_add, fabFg), new LinearLayout.LayoutParams(dp(24), dp(24)));
         TextView ft = Ui.medium(Ui.text(this, inc ? L.t("Инкогнито") : L.t("Новая вкладка"), 15, fabFg));
-        ft.setPadding(dp(10), 0, 0, 0);
+        ft.setPaddingRelative(dp(10), 0, 0, 0);
         fab.addView(ft);
         fab.setOnClickListener(v -> { switcher.setVisibility(View.GONE); switcher.removeAllViews(); newTab(null, inc, true, null); });
         FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(WRAP, dp(56), Gravity.BOTTOM | Gravity.END);
@@ -1692,7 +2150,7 @@ public class MainActivity extends Activity {
 
     View tabCard(Tab t, boolean inc, int fg, int fg2) {
         boolean sel = t == current;
-        int cardBg = inc ? 0xFF35363A : (Ui.dark ? (Ui.amoled ? 0xFF1C1C1E : 0xFF2D2E31) : Color.WHITE);
+        int cardBg = inc ? Ui.INC_SURFACE : (Ui.dark ? (Ui.amoled ? 0xFF1C1C1E : Ui.MENU_SURFACE) : Color.WHITE);
         int ring = inc ? 0xFFBDC1C6 : Ui.ACCENT;
         int headBg = sel ? (inc ? 0xFF5F6368 : Ui.TONAL) : cardBg;
         int headFg = sel ? (inc ? Color.WHITE : Ui.ON_TONAL) : fg;
@@ -1701,13 +2159,13 @@ public class MainActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(sel ? Ui.stroke(headBg, ring, 3, 22) : Ui.round(cardBg, 22));
         int pd = dp(sel ? 3 : 0);
-        card.setPadding(pd, pd, pd, pd);
+        card.setPaddingRelative(pd, pd, pd, pd);
         card.setClipToOutline(true);
         card.setElevation(dp(sel ? 6 : 2));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(dp(12), 0, dp(2), 0);
+        head.setPaddingRelative(dp(12), 0, dp(2), 0);
         String u = t.pendingUrl != null ? t.pendingUrl : (t.web.getUrl() != null ? t.web.getUrl() : t.url);
         String title = t.ntp ? (inc ? L.t("Инкогнито") : L.t("Новая вкладка")) : (t.title == null || t.title.isEmpty() ? displayUrl(u) : t.title);
         String sub = t.ntp ? (inc ? L.t("Новая вкладка") : L.t("Главная страница")) : (t.loading ? L.t("Загрузка…") : hostOf(u));
@@ -1725,17 +2183,17 @@ public class MainActivity extends Activity {
             fi.setImageBitmap(t.favicon);
             fb.addView(fi, new FrameLayout.LayoutParams(dp(15), dp(15), Gravity.CENTER));
             ic = fb;
-        } else ic = tileIcon(title, u, false, 0, 22);
+        } else ic = tileIcon(title, u, false, 0, 22, !t.incognito);
         head.addView(ic, new LinearLayout.LayoutParams(dp(22), dp(22)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(10), 0, dp(2), 0);
+        tx.setPaddingRelative(dp(10), 0, dp(2), 0);
         tx.addView(Ui.medium(Ui.single(this, title, 13, headFg)));
         tx.addView(Ui.single(this, sub, 11, headFg2));
         head.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
         ImageView x = Ui.iconBtn(this, R.drawable.ic_close, headFg2);
         x.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        x.setPadding(dp(10), dp(10), dp(10), dp(10));
+        x.setPaddingRelative(dp(10), dp(10), dp(10), dp(10));
         x.setOnClickListener(v -> card.animate().setStartDelay(0).alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(140)
                 .withEndAction(() -> closeTabs(one(t))).start());
         head.addView(x, new LinearLayout.LayoutParams(dp(40), dp(40)));
@@ -1768,7 +2226,7 @@ public class MainActivity extends Activity {
                 ph.addView(ring2, new LinearLayout.LayoutParams(dp(48), dp(48)));
             } else {
                 ph.setGravity(Gravity.CENTER_HORIZONTAL);
-                ph.setPadding(dp(16), dp(40), dp(16), 0);
+                ph.setPaddingRelative(dp(16), dp(40), dp(16), 0);
                 View bar = new View(this);
                 bar.setBackground(Ui.round(Ui.dark ? 0xFF3C4043 : (wp != null ? Color.WHITE : 0xFFF1F3F4), 10));
                 ph.addView(bar, new LinearLayout.LayoutParams(MATCH, dp(20)));
@@ -1792,17 +2250,17 @@ public class MainActivity extends Activity {
             th.setImageBitmap(t.thumb);
             thumbBox.addView(th, new FrameLayout.LayoutParams(MATCH, MATCH));
         } else {
-            FrameLayout big = tileIcon(title, u, false, 0, 52);
+            FrameLayout big = tileIcon(title, u, false, 0, 52, !t.incognito);
             thumbBox.addView(big, new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
         }
         if (t.video != null && !t.ntp) {
             LinearLayout vb = new LinearLayout(this);
             vb.setGravity(Gravity.CENTER_VERTICAL);
-            vb.setPadding(dp(8), dp(4), dp(10), dp(4));
+            vb.setPaddingRelative(dp(8), dp(4), dp(10), dp(4));
             vb.setBackground(Ui.round(0xCC202124, 12));
             vb.addView(Ui.icon(this, R.drawable.ic_play, Color.WHITE), new LinearLayout.LayoutParams(dp(14), dp(14)));
             TextView vt = Ui.text(this, L.t("Видео"), 11, Color.WHITE);
-            vt.setPadding(dp(4), 0, 0, 0);
+            vt.setPaddingRelative(dp(4), 0, 0, 0);
             vb.addView(vt);
             FrameLayout.LayoutParams vl = new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM | Gravity.START);
             vl.setMargins(dp(8), 0, 0, dp(8));
@@ -1872,11 +2330,14 @@ public class MainActivity extends Activity {
         unfocusOmni();
         final Tab t = current;
         boolean page = t != null && !t.ntp;
-        int surface = Ui.dark ? 0xFF2D2E31 : Color.WHITE;
+        boolean incMenu = t != null && t.incognito;
+        int surface = incMenu ? Ui.INC_SURFACE : Ui.MENU_SURFACE;
+        menuFg = incMenu ? Ui.INC_TEXT : Ui.TEXT;
+        menuFg2 = incMenu ? Ui.INC_TEXT2 : Ui.TEXT2;
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(4), 0, dp(6));
+        box.setPaddingRelative(0, dp(4), 0, dp(6));
         sv.addView(box);
         final PopupWindow pw = new PopupWindow(sv, dp(272), WRAP, true);
         pw.setBackgroundDrawable(Ui.round(surface, 10));
@@ -1884,13 +2345,15 @@ public class MainActivity extends Activity {
 
         LinearLayout top = new LinearLayout(this);
         int[] icons = {R.drawable.ic_forward, page && store.isBookmarked(t.web.getUrl()) ? R.drawable.ic_star : R.drawable.ic_star_border,
-                R.drawable.ic_download, R.drawable.ic_info, R.drawable.ic_refresh};
+                R.drawable.ic_download, R.drawable.ic_info, page && t.loading ? R.drawable.ic_close : R.drawable.ic_refresh};
         for (int i = 0; i < icons.length; i++) {
             final int k = i;
-            int color = Ui.TEXT2;
-            if (i == 0 && (t == null || !t.web.canGoForward())) color = Ui.dark ? 0xFF5F6368 : 0xFFBDC1C6;
+            int color = menuFg2;
+            if (i == 0 && (t == null || !t.web.canGoForward())) color = Ui.DISABLED;
+            if (i == 4 && !page) color = Ui.DISABLED;
             if (i == 1 && page && store.isBookmarked(t.web.getUrl())) color = Ui.ACCENT;
             ImageView b = Ui.iconBtn(this, icons[i], color);
+            if (i == 4 && page && t.loading) Ui.describe(b, L.t("Остановить загрузку"));
             b.setOnClickListener(v -> {
                 pw.dismiss();
                 if (t == null) return;
@@ -1898,12 +2361,12 @@ public class MainActivity extends Activity {
                 else if (k == 1) { if (page) { boolean on = store.toggleBookmark(t.title, t.web.getUrl()); snack(on ? L.t("Добавлено в закладки") : L.t("Закладка удалена"), on ? L.t("Закладки") : null, this::showBookmarks); } }
                 else if (k == 2) savePage(t);
                 else if (k == 3) showSiteInfo();
-                else { if (page) t.web.reload(); }
+                else if (page) { if (t.loading) { t.web.stopLoading(); t.loading = false; refreshChrome(); } else t.web.reload(); }
             });
             top.addView(b, new LinearLayout.LayoutParams(0, dp(52), 1));
         }
         box.addView(top);
-        View dv = new View(this); dv.setBackgroundColor(Ui.DIVIDER);
+        View dv = new View(this); dv.setBackgroundColor(incMenu ? Ui.INC_DIVIDER : Ui.DIVIDER);
         box.addView(dv, new LinearLayout.LayoutParams(MATCH, 1));
 
         menuItem(box, pw, R.drawable.ic_add, L.t("Новая вкладка"), () -> newTab(null, false, true, null));
@@ -1933,14 +2396,16 @@ public class MainActivity extends Activity {
         pw.showAsDropDown(menuBtn, 0, -menuBtn.getHeight());
     }
 
+    int menuFg = Ui.TEXT, menuFg2 = Ui.TEXT2;
+
     LinearLayout menuItem(LinearLayout box, PopupWindow pw, int icon, String text, Runnable r) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), 0, dp(12), 0);
+        row.setPaddingRelative(dp(16), 0, dp(12), 0);
         row.setBackground(Ui.ripple(this, false));
-        row.addView(Ui.icon(this, icon, Ui.TEXT2), new LinearLayout.LayoutParams(dp(24), dp(24)));
-        TextView tv = Ui.single(this, text, 15, Ui.TEXT);
-        tv.setPadding(dp(18), 0, 0, 0);
+        row.addView(Ui.icon(this, icon, menuFg2), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView tv = Ui.single(this, text, 15, menuFg);
+        tv.setPaddingRelative(dp(18), 0, 0, 0);
         row.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
         row.setOnClickListener(v -> { pw.dismiss(); r.run(); });
         box.addView(row, new LinearLayout.LayoutParams(MATCH, dp(48)));
@@ -1977,14 +2442,18 @@ public class MainActivity extends Activity {
         final Tab t = current;
         final String host = t.pageHost;
         String u = t.web.getUrl();
-        boolean secure = u != null && u.startsWith("https://");
-        boolean wl = host != null && AdBlocker.whitelist.contains(host);
+        int sec = security(t);
+        boolean secure = sec == 1;
+        boolean badCert = sec == 2 && u != null && u.startsWith("https://") && host != null && t.sslHosts.contains(host.toLowerCase(Locale.ROOT));
+        boolean wl = host != null && AdBlocker.siteAllowed(host);
         String msg = (secure ? L.t("🔒 Подключение защищено.\nДанные (пароли, номера карт) передаются в зашифрованном виде.")
+                : badCert ? L.t("⚠ Сертификат сайта недействителен, но вы решили открыть его.\nНе вводите на этом сайте пароли и платёжные данные.")
+                : t.mixed ? L.t("⚠ Часть страницы загружена без шифрования (смешанное содержимое).\nЕё могут подменить или подсмотреть в сети.")
                 : L.t("⚠ Подключение не защищено.\nНе вводите на этом сайте конфиденциальные данные."))
                 + L.t("\n\nБлокировка рекламы: ") + (!AdBlocker.enabled ? L.t("выключена в настройках") : wl ? L.t("отключена для этого сайта") : L.t("включена"))
                 + L.t("\nЗаблокировано запросов на странице: ") + t.blocked.get()
                 + L.t("\nВидео: ") + (t.video != null ? L.t("найдено") : L.t("не найдено"));
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(host == null ? displayUrl(u) : host).setMessage(msg)
+        AlertDialog.Builder b = dialog().setTitle(host == null ? displayUrl(u) : host).setMessage(msg)
                 .setPositiveButton(L.t("ОК"), null);
         if (host != null && AdBlocker.enabled) b.setNeutralButton(wl ? L.t("Включить блокировку здесь") : L.t("Отключить блокировку здесь"), (d, w) -> {
             store.setWhitelisted(host, !wl);
@@ -2002,16 +2471,16 @@ public class MainActivity extends Activity {
         col.setBackgroundColor(Ui.BG);
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(4), 0, dp(8), 0);
+        bar.setPaddingRelative(dp(4), 0, dp(8), 0);
         ImageView back = Ui.iconBtn(this, R.drawable.ic_back, Ui.TEXT2);
         back.setOnClickListener(v -> d.dismiss());
         bar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         TextView tt = Ui.medium(Ui.text(this, title, 20, Ui.TEXT));
-        tt.setPadding(dp(12), 0, 0, 0);
+        tt.setPaddingRelative(dp(12), 0, 0, 0);
         bar.addView(tt, new LinearLayout.LayoutParams(0, WRAP, 1));
         if (action != null) {
             TextView a = Ui.medium(Ui.text(this, action, 15, Ui.ACCENT));
-            a.setPadding(dp(12), dp(12), dp(12), dp(12));
+            a.setPaddingRelative(dp(12), dp(12), dp(12), dp(12));
             a.setBackground(Ui.ripple(this, true));
             a.setOnClickListener(v -> onAction.run());
             bar.addView(a);
@@ -2022,11 +2491,7 @@ public class MainActivity extends Activity {
         col.addView(body, new LinearLayout.LayoutParams(MATCH, 0, 1));
         d.setContentView(col);
         Window w = d.getWindow();
-        if (w != null) {
-            w.setStatusBarColor(Ui.BG);
-            w.setNavigationBarColor(Ui.BG);
-            if (!Ui.dark) w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-        }
+        if (w != null) edgeToEdge(w, col, Ui.BG, !Ui.dark);
         d.show();
         return d;
     }
@@ -2034,68 +2499,355 @@ public class MainActivity extends Activity {
     void showHistory() { showItems(L.t("История"), store.history, true); }
     void showBookmarks() { showItems(L.t("Закладки"), store.bookmarks, false); }
 
+    /** One list row: a day/folder header, a folder entry, or an item. */
+    static final class ListRow {
+        final String header, folder; final Store.Item it;
+        ListRow(String header, String folder, Store.Item it) { this.header = header; this.folder = folder; this.it = it; }
+    }
+
+    Runnable itemsRefresh;
+    static final String UP_FOLDER = "\u0000up";
+
     void showItems(String title, ArrayList<Store.Item> items, boolean history) {
-        ScrollView sv = new ScrollView(this);
-        LinearLayout list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        sv.addView(list);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        EditText q = new EditText(this);
+        q.setSingleLine(true);
+        q.setHint(history ? L.t("Поиск по истории") : L.t("Поиск по закладкам"));
+        q.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        q.setTextColor(Ui.TEXT);
+        q.setHintTextColor(Ui.TEXT2);
+        q.setBackground(Ui.round(Ui.PILL, 22));
+        q.setPaddingRelative(dp(18), 0, dp(18), 0);
+        q.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(MATCH, dp(44));
+        qlp.setMargins(dp(12), dp(10), dp(12), dp(4));
+        body.addView(q, qlp);
+        FrameLayout frame = new FrameLayout(this);
+        body.addView(frame, new LinearLayout.LayoutParams(MATCH, 0, 1));
+        android.widget.ListView lv = new android.widget.ListView(this);
+        lv.setDivider(null);
+        lv.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        lv.setClipToPadding(false);
+        lv.setPaddingRelative(0, 0, 0, dp(80));
+        frame.addView(lv, new FrameLayout.LayoutParams(MATCH, MATCH));
+        TextView empty = Ui.text(this, "", 15, Ui.TEXT2);
+        empty.setGravity(Gravity.CENTER_HORIZONTAL);
+        empty.setPaddingRelative(dp(24), dp(64), dp(24), 0);
+        frame.addView(empty, new FrameLayout.LayoutParams(MATCH, MATCH));
+        lv.setEmptyView(empty);
+        // in-dialog undo bar (the activity snackbar would be hidden behind the full-screen dialog)
+        LinearLayout undo = new LinearLayout(this);
+        undo.setGravity(Gravity.CENTER_VERTICAL);
+        undo.setPaddingRelative(dp(18), dp(4), dp(6), dp(4));
+        undo.setMinimumHeight(dp(50));
+        undo.setBackground(Ui.round(Ui.SNACK, 14));
+        undo.setElevation(dp(8));
+        TextView undoText = Ui.text(this, "", 14, Ui.dark ? 0xFF202124 : 0xFFF1F3F4);
+        undo.addView(undoText, new LinearLayout.LayoutParams(0, WRAP, 1));
+        TextView undoBtn = Ui.medium(Ui.text(this, L.t("Вернуть"), 14, Ui.dark ? 0xFF1A73E8 : 0xFF8AB4F8));
+        undoBtn.setPaddingRelative(dp(14), dp(12), dp(14), dp(12));
+        undo.addView(undoBtn);
+        undo.setVisibility(View.GONE);
+        FrameLayout.LayoutParams ulp = new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM);
+        ulp.setMargins(dp(12), 0, dp(12), dp(16));
+        frame.addView(undo, ulp);
+        final Runnable hideUndo = () -> undo.setVisibility(View.GONE);
+
         final Dialog[] dl = new Dialog[1];
+        final String[] folder = {""};
+        final ArrayList<ListRow> rows = new ArrayList<>();
+        final java.text.DateFormat dayFmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG);
+        final java.text.DateFormat timeFmt = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT);
         final Runnable[] fill = new Runnable[1];
-        fill[0] = () -> {
-            list.removeAllViews();
-            if (items.isEmpty()) {
-                TextView e = Ui.text(this, history ? L.t("История пуста") : L.t("Закладок пока нет.\nНажмите ☆ в меню, чтобы добавить страницу."), 15, Ui.TEXT2);
-                e.setGravity(Gravity.CENTER);
-                e.setPadding(dp(24), dp(64), dp(24), 0);
-                list.addView(e, new LinearLayout.LayoutParams(MATCH, WRAP));
-                return;
-            }
-            java.text.DateFormat df = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT);
-            int max = Math.min(items.size(), 400);
-            for (int i = 0; i < max; i++) {
-                final Store.Item it = items.get(i);
-                LinearLayout r = new LinearLayout(this);
+        android.widget.BaseAdapter ad = new android.widget.BaseAdapter() {
+            @Override public int getCount() { return rows.size(); }
+            @Override public Object getItem(int i) { return rows.get(i); }
+            @Override public long getItemId(int i) { return i; }
+            @Override public boolean isEnabled(int i) { ListRow r = rows.get(i); return r.header == null; }
+            @Override public View getView(int pos, View cv, android.view.ViewGroup parent) {
+                ListRow row = rows.get(pos);
+                if (row.header != null) {
+                    TextView h = Ui.medium(Ui.text(MainActivity.this, row.header, 13, Ui.ACCENT));
+                    h.setPaddingRelative(dp(20), dp(18), dp(20), dp(6));
+                    return h;
+                }
+                LinearLayout r = new LinearLayout(MainActivity.this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(10), dp(8), dp(10));
-                r.setBackground(Ui.ripple(this, false));
+                r.setPaddingRelative(dp(16), dp(10), dp(8), dp(10));
+                r.setMinimumHeight(dp(56));
+                r.setBackground(Ui.ripple(MainActivity.this, false));
+                if (row.folder != null) {
+                    boolean up = UP_FOLDER.equals(row.folder);
+                    ImageView fi = Ui.icon(MainActivity.this, up ? R.drawable.ic_back : R.drawable.ic_folder, Ui.TEXT2);
+                    fi.setScaleType(ImageView.ScaleType.CENTER);
+                    r.addView(fi, new LinearLayout.LayoutParams(dp(36), dp(36)));
+                    int n = 0;
+                    if (!up) for (Store.Item b : items) if (row.folder.equals(b.f)) n++;
+                    LinearLayout tx = new LinearLayout(MainActivity.this);
+                    tx.setOrientation(LinearLayout.VERTICAL);
+                    tx.setPaddingRelative(dp(16), 0, dp(8), 0);
+                    tx.addView(Ui.single(MainActivity.this, up ? folder[0] : row.folder, 15, Ui.TEXT));
+                    tx.addView(Ui.single(MainActivity.this, up ? L.t("Назад") : n + " " + L.t("закладок"), 13, Ui.TEXT2));
+                    r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
+                    r.setOnClickListener(v -> { folder[0] = up ? "" : row.folder; fill[0].run(); lv.setSelection(0); });
+                    return r;
+                }
+                final Store.Item it = row.it;
                 r.addView(tileIcon(it.t, it.u, false, 0, 36), new LinearLayout.LayoutParams(dp(36), dp(36)));
-                LinearLayout tx = new LinearLayout(this);
+                LinearLayout tx = new LinearLayout(MainActivity.this);
                 tx.setOrientation(LinearLayout.VERTICAL);
-                tx.setPadding(dp(16), 0, dp(8), 0);
-                tx.addView(Ui.single(this, it.t, 15, Ui.TEXT));
-                tx.addView(Ui.single(this, displayUrl(it.u) + (history && it.d > 0 ? " · " + df.format(new java.util.Date(it.d)) : ""), 13, Ui.TEXT2));
+                tx.setPaddingRelative(dp(16), 0, dp(8), 0);
+                tx.addView(Ui.single(MainActivity.this, it.t == null || it.t.isEmpty() ? displayUrl(it.u) : it.t, 15, Ui.TEXT));
+                String sub = displayUrl(it.u);
+                if (history && it.d > 0) sub = timeFmt.format(new java.util.Date(it.d)) + " · " + sub;
+                else if (!history && !q.getText().toString().trim().isEmpty() && it.f != null && !it.f.isEmpty()) sub = it.f + " · " + sub;
+                tx.addView(Ui.single(MainActivity.this, sub, 13, Ui.TEXT2));
                 r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
-                ImageView del = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
+                if (!history) {
+                    ImageView ed = Ui.iconBtn(MainActivity.this, R.drawable.ic_edit, Ui.TEXT2);
+                    ed.setOnClickListener(v -> editBookmark(it, fill[0]));
+                    r.addView(ed, new LinearLayout.LayoutParams(dp(44), dp(44)));
+                }
+                ImageView del = Ui.iconBtn(MainActivity.this, R.drawable.ic_close, Ui.TEXT2);
+                del.setContentDescription(L.t("Удалить"));
                 del.setOnClickListener(v -> {
-                    items.remove(it);
+                    int idx = items.indexOf(it);
+                    if (idx < 0) return;
+                    items.remove(idx);
                     if (history) store.saveHistory(); else store.saveBookmarks();
                     fill[0].run();
+                    undoText.setText(L.t("Удалено") + ": " + (it.t == null || it.t.isEmpty() ? displayUrl(it.u) : it.t));
+                    undoBtn.setOnClickListener(x -> {
+                        items.add(Math.min(idx, items.size()), it);
+                        if (history) store.saveHistory(); else store.saveBookmarks();
+                        hideUndo.run();
+                        fill[0].run();
+                    });
+                    undo.setVisibility(View.VISIBLE);
+                    ui.removeCallbacks(hideUndo);
+                    ui.postDelayed(hideUndo, 5000);
                 });
-                r.addView(del, new LinearLayout.LayoutParams(dp(40), dp(40)));
+                r.addView(del, new LinearLayout.LayoutParams(dp(44), dp(44)));
                 r.setOnClickListener(v -> { dl[0].dismiss(); navigate(it.u); });
                 r.setOnLongClickListener(v -> { linkMenu(it.u, it.t, null); return true; });
-                list.addView(r, new LinearLayout.LayoutParams(MATCH, WRAP));
+                return r;
             }
         };
+        fill[0] = () -> {
+            rows.clear();
+            String f = q.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            if (history) {
+                java.util.Calendar c = java.util.Calendar.getInstance();
+                c.set(java.util.Calendar.HOUR_OF_DAY, 0); c.set(java.util.Calendar.MINUTE, 0); c.set(java.util.Calendar.SECOND, 0); c.set(java.util.Calendar.MILLISECOND, 0);
+                long today = c.getTimeInMillis(), yesterday = today - 86400000L;
+                String last = null;
+                for (Store.Item it : items) {
+                    if (!f.isEmpty() && !matches(it, f)) continue;
+                    String day = it.d <= 0 ? L.t("Ранее") : it.d >= today ? L.t("Сегодня") : it.d >= yesterday ? L.t("Вчера") : dayFmt.format(new java.util.Date(it.d));
+                    if (!day.equals(last)) { rows.add(new ListRow(day, null, null)); last = day; }
+                    rows.add(new ListRow(null, null, it));
+                }
+            } else if (!f.isEmpty()) {
+                for (Store.Item it : items) if (matches(it, f) || (it.f != null && it.f.toLowerCase(java.util.Locale.ROOT).contains(f))) rows.add(new ListRow(null, null, it));
+            } else if (folder[0].isEmpty()) {
+                for (String name : store.folders()) rows.add(new ListRow(null, name, null));
+                for (Store.Item it : items) if (it.f == null || it.f.isEmpty()) rows.add(new ListRow(null, null, it));
+            } else {
+                rows.add(new ListRow(null, UP_FOLDER, null));
+                for (Store.Item it : items) if (folder[0].equals(it.f)) rows.add(new ListRow(null, null, it));
+                if (rows.size() == 1) folder[0] = "";
+                if (folder[0].isEmpty()) { fill[0].run(); return; }
+            }
+            empty.setText(!f.isEmpty() ? L.t("Ничего не найдено") : history ? L.t("История пуста") : L.t("Закладок пока нет.\nНажмите ☆ в меню, чтобы добавить страницу."));
+            ad.notifyDataSetChanged();
+        };
+        lv.setAdapter(ad);
+        q.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { fill[0].run(); }
+        });
         fill[0].run();
-        dl[0] = fullDialog(title, sv, history ? L.t("Очистить") : null, () -> new AlertDialog.Builder(this)
-                .setMessage(L.t("Очистить всю историю просмотров?"))
-                .setPositiveButton(L.t("Очистить"), (d, w) -> { store.history.clear(); store.saveHistory(); fill[0].run(); })
-                .setNegativeButton(L.t("Отмена"), null).show());
+        itemsRefresh = history ? null : fill[0];
+        dl[0] = fullDialog(title, body, history ? L.t("Очистить") : L.t("Ещё"), () -> {
+            if (history) dialog()
+                    .setMessage(L.t("Очистить всю историю просмотров?"))
+                    .setPositiveButton(L.t("Очистить"), (d, w) -> { store.history.clear(); store.saveHistory(); fill[0].run(); })
+                    .setNegativeButton(L.t("Отмена"), null).show();
+            else dialog()
+                    .setItems(new String[]{L.t("Импорт закладок (HTML)"), L.t("Экспорт закладок (HTML)")}, (d, w) -> {
+                        try {
+                            if (w == 0) startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                                    .setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/html", "text/plain", "application/octet-stream"}), REQ_BM_IMPORT);
+                            else startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                                    .setType("text/html").putExtra(Intent.EXTRA_TITLE, "lasur-bookmarks.html"), REQ_BM_EXPORT);
+                        } catch (Exception e) { toast(L.t("Не удалось открыть выбор файла")); }
+                    }).show();
+        });
+        dl[0].setOnDismissListener(d -> { ui.removeCallbacks(hideUndo); if (!history) itemsRefresh = null; });
+    }
+
+    static boolean matches(Store.Item it, String f) {
+        return (it.t != null && it.t.toLowerCase(java.util.Locale.ROOT).contains(f)) || (it.u != null && it.u.toLowerCase(java.util.Locale.ROOT).contains(f));
+    }
+
+    void editBookmark(Store.Item it, Runnable after) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPaddingRelative(dp(22), dp(8), dp(22), 0);
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setHint(L.t("Название"));
+        name.setText(it.t);
+        box.addView(name);
+        EditText url = new EditText(this);
+        url.setSingleLine(true);
+        url.setHint("URL");
+        url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        url.setText(it.u);
+        box.addView(url);
+        android.widget.AutoCompleteTextView fold = new android.widget.AutoCompleteTextView(this);
+        fold.setSingleLine(true);
+        fold.setThreshold(0);
+        fold.setHint(L.t("Папка (необязательно)"));
+        fold.setText(it.f == null ? "" : it.f);
+        fold.setAdapter(new android.widget.ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, store.folders()));
+        fold.setOnFocusChangeListener((v, has) -> { if (has && fold.getAdapter() != null && fold.getAdapter().getCount() > 0) fold.showDropDown(); });
+        box.addView(fold);
+        dialog().setTitle(L.t("Изменить закладку")).setView(box)
+                .setPositiveButton(L.t("Сохранить"), (d, w) -> {
+                    String u = url.getText().toString().trim();
+                    if (u.isEmpty()) return;
+                    if (!u.contains("://") && !u.startsWith("about:")) u = toUrl(u);
+                    it.u = u;
+                    String t = name.getText().toString().trim();
+                    it.t = t.isEmpty() ? displayUrl(u) : t;
+                    it.f = fold.getText().toString().trim();
+                    store.saveBookmarks();
+                    if (after != null) after.run();
+                })
+                .setNegativeButton(L.t("Отмена"), null).show();
+    }
+
+    static final int REQ_BM_IMPORT = 19, REQ_BM_EXPORT = 20;
+
+    static String htmlEsc(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
+    /** Netscape bookmark file format, understood by Chrome, Firefox and most other browsers. */
+    static String exportBookmarksHtml(ArrayList<Store.Item> items, ArrayList<String> folders) {
+        StringBuilder b = new StringBuilder("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">\n<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n");
+        for (String f : folders) {
+            b.append("    <DT><H3>").append(htmlEsc(f)).append("</H3>\n    <DL><p>\n");
+            for (Store.Item it : items) if (f.equals(it.f)) appendBm(b, it, "        ");
+            b.append("    </DL><p>\n");
+        }
+        for (Store.Item it : items) if (it.f == null || it.f.isEmpty()) appendBm(b, it, "    ");
+        return b.append("</DL><p>\n").toString();
+    }
+
+    static void appendBm(StringBuilder b, Store.Item it, String ind) {
+        b.append(ind).append("<DT><A HREF=\"").append(htmlEsc(it.u)).append("\" ADD_DATE=\"").append(Math.max(0, it.d / 1000)).append("\">")
+                .append(htmlEsc(it.t)).append("</A>\n");
+    }
+
+    static String htmlUnesc(String s) {
+        s = s.replaceAll("(?s)<[^>]*>", "");
+        Matcher m = Pattern.compile("&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos|nbsp);").matcher(s);
+        StringBuffer b = new StringBuffer();
+        while (m.find()) {
+            String e = m.group(1), r;
+            switch (e) {
+                case "amp": r = "&"; break; case "lt": r = "<"; break; case "gt": r = ">"; break;
+                case "quot": r = "\""; break; case "apos": r = "'"; break; case "nbsp": r = " "; break;
+                default:
+                    try { r = new String(Character.toChars(e.startsWith("#x") || e.startsWith("#X") ? Integer.parseInt(e.substring(2), 16) : Integer.parseInt(e.substring(1)))); }
+                    catch (Exception ex) { r = m.group(); }
+            }
+            m.appendReplacement(b, Matcher.quoteReplacement(r));
+        }
+        m.appendTail(b);
+        return b.toString().trim();
+    }
+
+    /** Parses a Netscape bookmark file; nested folders are flattened to their innermost name. */
+    static ArrayList<Store.Item> parseBookmarksHtml(String html) {
+        ArrayList<Store.Item> out = new ArrayList<>();
+        Matcher m = Pattern.compile("(?is)<h3[^>]*>(.*?)</h3>|<a\\s[^>]*?href\\s*=\\s*\"([^\"]*)\"[^>]*>(.*?)</a>|<dl\\b|</dl>").matcher(html);
+        java.util.ArrayDeque<String> stack = new java.util.ArrayDeque<>();
+        String pending = null;
+        int depth = 0;
+        while (m.find()) {
+            String g = m.group();
+            if (m.group(1) != null) pending = htmlUnesc(m.group(1));
+            else if (m.group(2) != null) {
+                String u = htmlUnesc(m.group(2));
+                if (!u.startsWith("http://") && !u.startsWith("https://")) continue;
+                String t = htmlUnesc(m.group(3));
+                Store.Item it = new Store.Item(t.isEmpty() ? u : t, u, 0);
+                Matcher d = Pattern.compile("(?i)add_date\\s*=\\s*\"(\\d+)\"").matcher(g);
+                if (d.find()) try { it.d = Long.parseLong(d.group(1)) * 1000; } catch (NumberFormatException ignored) { }
+                it.f = stack.isEmpty() ? "" : stack.peek();
+                out.add(it);
+            } else if (g.regionMatches(true, 0, "<dl", 0, 3)) {
+                depth++;
+                // the outermost list maps to the top level
+                stack.push(pending != null && depth > 1 ? pending : stack.isEmpty() ? "" : stack.peek());
+                pending = null;
+            } else {
+                depth--;
+                if (!stack.isEmpty()) stack.pop();
+            }
+        }
+        return out;
+    }
+
+    void onBookmarkFile(int req, Uri uri) {
+        if (uri == null) return;
+        if (req == REQ_BM_EXPORT) {
+            final String html = exportBookmarksHtml(store.bookmarks, store.folders());
+            BG.execute(() -> {
+                try (java.io.OutputStream os = getContentResolver().openOutputStream(uri, "wt")) {
+                    os.write(html.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    longToast(L.t("Закладки экспортированы"));
+                } catch (Exception e) { Log.w(TAG, "bookmark export", e); longToast(L.t("Не удалось сохранить файл")); }
+            });
+            return;
+        }
+        BG.execute(() -> {
+            try (InputStream is = getContentResolver().openInputStream(uri)) {
+                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = is.read(buf)) > 0) { bo.write(buf, 0, n); if (bo.size() > 16 * 1024 * 1024) break; }
+                ArrayList<Store.Item> got = parseBookmarksHtml(bo.toString("UTF-8"));
+                ui.post(() -> {
+                    HashSet<String> have = new HashSet<>();
+                    for (Store.Item it : store.bookmarks) have.add(it.u);
+                    int added = 0;
+                    for (Store.Item it : got) if (have.add(it.u)) { store.bookmarks.add(it); added++; }
+                    store.saveBookmarks();
+                    if (itemsRefresh != null) itemsRefresh.run();
+                    longToast(L.t("Импортировано закладок:") + " " + added);
+                });
+            } catch (Exception e) { Log.w(TAG, "bookmark import", e); longToast(L.t("Не удалось прочитать файл")); }
+        });
     }
 
     // ------------------------------------------------------------------ settings
 
     void section(LinearLayout box, String s) {
         TextView t = Ui.medium(Ui.text(this, s, 13, Ui.ACCENT));
-        t.setPadding(dp(20), dp(20), dp(20), dp(6));
+        t.setPaddingRelative(dp(20), dp(20), dp(20), dp(6));
         box.addView(t);
     }
 
     TextView actionRow(LinearLayout box, String title, String sub, Runnable r) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(20), dp(12), dp(20), dp(12));
+        row.setPaddingRelative(dp(20), dp(12), dp(20), dp(12));
         if (r != null) { row.setBackground(Ui.ripple(this, false)); row.setOnClickListener(v -> r.run()); }
         row.addView(Ui.text(this, title, 16, Ui.TEXT));
         TextView s = Ui.text(this, sub, 13, Ui.TEXT2);
@@ -2109,7 +2861,7 @@ public class MainActivity extends Activity {
     void switchRow(LinearLayout box, String title, String sub, boolean checked, BoolCb cb) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(20), dp(12), dp(16), dp(12));
+        row.setPaddingRelative(dp(20), dp(12), dp(16), dp(12));
         row.setBackground(Ui.ripple(this, false));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
@@ -2127,7 +2879,7 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ videos
     static String typeOf(String url) {
         String p = "";
-        try { p = Uri.parse(url).getPath().toLowerCase(); } catch (Exception ignored) { }
+        try { p = Uri.parse(url).getPath().toLowerCase(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         if (p.endsWith(".m3u8")) return "HLS";
         if (p.endsWith(".mpd")) return "DASH";
         int d = p.lastIndexOf('.');
@@ -2144,13 +2896,14 @@ public class MainActivity extends Activity {
             EditText name = new EditText(this);
             name.setText(Saver.clean(base));
             name.setSingleLine(true);
-            FrameLayout f = new FrameLayout(this); f.setPadding(dp(20), dp(8), dp(20), 0); f.addView(name);
-            new AlertDialog.Builder(this).setTitle(L.t("Скачать видеопоток")).setMessage(L.t("Видео будет собрано из частей (HLS) в один файл."))
+            FrameLayout f = new FrameLayout(this); f.setPaddingRelative(dp(20), dp(8), dp(20), 0); f.addView(name);
+            dialog().setTitle(L.t("Скачать видеопоток")).setMessage(L.t("Видео будет собрано из частей (HLS) в один файл."))
                     .setView(f).setPositiveButton(L.t("Скачать"), (d, w) -> {
                         String n = name.getText().toString();
                         withStorage(() -> withNotif(() -> {
                             Intent si = new Intent(this, HlsService.class).putExtra("url", v.url).putExtra("name", n)
-                                    .putExtra("referer", v.page).putExtra("ua", uaOf(t));
+                                    .putExtra("referer", v.page).putExtra("ua", uaOf(t)).putExtra("incognito", t.incognito);
+                            if (t.incognito) { String ck = cookies(true).getCookie(v.url); if (ck != null) si.putExtra("cookie", ck); }
                             startForegroundService(si);
                             toast(L.t("Загрузка началась — прогресс в уведомлениях"));
                         }));
@@ -2164,20 +2917,34 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ downloads
     void onDownload(Tab t, String url, String ua, String cd, String mime, long len) {
+        // The navigation turned into a download: the page did not change, restore its host.
+        try { String pu = t.web.getUrl(); if (pu != null) t.pageHost = Uri.parse(pu).getHost(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         String name = fileName(url, cd, mime);
         if (url.startsWith("blob:")) {
-            String js = "(function(){fetch(" + JSONObject.quote(url) + ").then(function(r){return r.blob()}).then(function(b){var f=new FileReader();"
-                    + "f.onload=function(){LumenBridge.saveBase64(f.result," + JSONObject.quote(name) + "," + JSONObject.quote(mime == null ? "" : mime) + ")};f.readAsDataURL(b)})})()";
-            t.web.evaluateJavascript(js, null);
-            toast(L.t("Сохранение файла…"));
+            withStorage(() -> {
+                String token = java.util.UUID.randomUUID().toString();
+                BlobSave bs = new BlobSave();
+                bs.name = name; bs.mime = mime;
+                blobSaves.put(token, bs);
+                String q = JSONObject.quote(token);
+                // Streams the blob in 768 KB slices instead of one huge data: URL (which ran out of memory).
+                String js = "(function(){var B=LumenBridge,T=" + q + ";fetch(" + JSONObject.quote(url) + ").then(function(r){return r.blob()}).then(function(b){"
+                        + "var CH=786432,o=0;function next(){if(o>=b.size){B.saveEnd(T,1);return}var f=new FileReader();"
+                        + "f.onload=function(){var s=f.result;B.saveChunk(T,s.substring(s.indexOf(',')+1));o+=CH;next()};"
+                        + "f.onerror=function(){B.saveEnd(T,0)};f.readAsDataURL(b.slice(o,o+CH))}"
+                        + "if(B.saveBegin(T,b.type||''))next()}).catch(function(){B.saveEnd(T,0)})})()";
+                t.web.evaluateJavascript(js, null);
+                toast(L.t("Сохранение файла…"));
+                ui.postDelayed(() -> { BlobSave left = blobSaves.get(token); if (left != null && left.saver == null) blobSaves.remove(token); }, 60000);
+            });
             return;
         }
-        if (url.startsWith("data:")) { withStorage(() -> new Thread(() -> saveDataUrl(url, name, mime)).start()); return; }
+        if (url.startsWith("data:")) { withStorage(() -> BG.execute(() -> saveDataUrl(url, name, mime))); return; }
         boolean video = (mime != null && mime.startsWith("video/")) || isVideoUrl(url);
         if (video) {
             final Tab.Video v = new Tab.Video(url, t.web.getUrl(), name);
             addVideo(t, url, t.web.getUrl(), name);
-            new AlertDialog.Builder(this).setTitle(name)
+            dialog().setTitle(name)
                     .setItems(new String[]{L.t("Скачать"), L.t("Открыть во внешнем плеере"), L.t("Копировать ссылку")}, (d, w) -> {
                         if (w == 0) confirmDownload(url, name, mime, t.web.getUrl(), ua, len);
                         else if (w == 1) openExternal(v, t);
@@ -2188,13 +2955,16 @@ public class MainActivity extends Activity {
         confirmDownload(url, name, mime, t.web.getUrl(), ua, len);
     }
 
+    static final class BlobSave { String name, mime; Saver saver; volatile boolean failed; }
+    final java.util.concurrent.ConcurrentHashMap<String, BlobSave> blobSaves = new java.util.concurrent.ConcurrentHashMap<>();
+
     void confirmDownload(String url, String name, String mime, String referer, String ua, long len) {
         EditText et = new EditText(this);
         et.setText(name);
         et.setSingleLine(true);
-        FrameLayout f = new FrameLayout(this); f.setPadding(dp(20), dp(8), dp(20), 0); f.addView(et);
+        FrameLayout f = new FrameLayout(this); f.setPaddingRelative(dp(20), dp(8), dp(20), 0); f.addView(et);
         String size = len > 0 ? android.text.format.Formatter.formatShortFileSize(this, len) : null;
-        new AlertDialog.Builder(this).setTitle(L.t("Скачать файл?")).setMessage(displayUrl(url) + (size != null ? " · " + size : ""))
+        dialog().setTitle(L.t("Скачать файл?")).setMessage(displayUrl(url) + (size != null ? " · " + size : ""))
                 .setView(f)
                 .setPositiveButton(L.t("Скачать"), (d, w) -> startDownload(url, Saver.clean(et.getText().toString()), mime, referer, ua))
                 .setNegativeButton(L.t("Отмена"), null).show();
@@ -2207,7 +2977,7 @@ public class MainActivity extends Activity {
                 DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
                 String mt = mimeFor(name, mime);
                 if (mt != null && !mt.isEmpty()) r.setMimeType(mt);
-                String ck = CookieManager.getInstance().getCookie(url);
+                String ck = cookies(current != null && current.incognito).getCookie(url);
                 if (ck != null) r.addRequestHeader("Cookie", ck);
                 if (ua != null) r.addRequestHeader("User-Agent", ua);
                 if (referer != null && referer.startsWith("http")) r.addRequestHeader("Referer", referer);
@@ -2295,20 +3065,32 @@ public class MainActivity extends Activity {
         root.requestFocus();
     }
 
-    @Override public void onBackPressed() {
-        if (customView != null) { hideCustomView(); return; }
-        if (switcher.getVisibility() == View.VISIBLE) { hideSwitcher(); return; }
-        if (findBar.getVisibility() == View.VISIBLE) { hideFind(); return; }
-        if (omni.hasFocus()) { unfocusOmni(); return; }
+    @SuppressWarnings("deprecation")
+    @Override public void onBackPressed() { if (!handleBack()) moveTaskToBack(true); }
+
+    /** Android 13+ (and required for predictive back with targetSdk 36): back goes through this callback. */
+    void registerBack() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    () -> { if (!handleBack()) moveTaskToBack(true); });
+        }
+    }
+
+    /** @return true if "Back" was handled inside the browser. */
+    boolean handleBack() {
+        if (customView != null) { hideCustomView(); return true; }
+        if (switcher.getVisibility() == View.VISIBLE) { hideSwitcher(); return true; }
+        if (findBar.getVisibility() == View.VISIBLE) { hideFind(); return true; }
+        if (omni.hasFocus()) { unfocusOmni(); return true; }
         Tab t = current;
         if (t != null) {
             String u = t.web.getUrl();
-            if (t.ntp && u != null && !u.equals("about:blank") && t.pendingUrl == null) { t.ntp = false; refreshChrome(); return; }
-            if (!t.ntp && t.web.canGoBack()) { t.web.goBack(); return; }
-            if (!t.ntp && t.fromNtp) { t.ntp = true; t.fromNtp = false; silence(t); refreshChrome(); return; }
-            if (t.parent != null && tabs.contains(t.parent)) { closeTab(t); return; }
+            if (t.ntp && u != null && !u.equals("about:blank") && t.pendingUrl == null) { t.ntp = false; refreshChrome(); return true; }
+            if (!t.ntp && t.web.canGoBack()) { t.web.goBack(); return true; }
+            if (!t.ntp && t.fromNtp) { t.ntp = true; t.fromNtp = false; silence(t); refreshChrome(); return true; }
+            if (t.parent != null && tabs.contains(t.parent)) { closeTab(t); return true; }
         }
-        moveTaskToBack(true);
+        return false;
     }
 
     // ================================================================== v1.2 additions
@@ -2326,7 +3108,7 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------- video: only the latest one
     void addVideo(Tab t, String url, String page, String title) {
         if (url == null || !url.startsWith("http")) return;
-        try { if (AdBlocker.enabled && AdBlocker.isAd(Uri.parse(url).getHost())) return; } catch (Exception ignored) { }
+        try { if (AdBlocker.enabled && AdBlocker.isAd(Uri.parse(url).getHost())) return; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         Tab.Video cur = t.video;
         if (cur != null && cur.url.equals(url)) return;
         if (cur != null && cur.master) for (String[] vr : cur.variants) if (vr[1].equals(url)) return;
@@ -2342,13 +3124,13 @@ public class MainActivity extends Activity {
         if (t == current) { updateVideoFab(); if (isNew) pulseFab(); }
     }
 
-    static String httpText(String u, String ua, String ref, int max) throws Exception {
+    static String httpText(String u, String ua, String ref, int max, CookieManager cm) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(10000);
         if (ua != null) c.setRequestProperty("User-Agent", ua);
         if (ref != null) c.setRequestProperty("Referer", ref);
-        try { String ck = CookieManager.getInstance().getCookie(u); if (ck != null) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) { }
+        if (cm != null) try { String ck = cm.getCookie(u); if (ck != null) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) { }
         try (InputStream in = c.getInputStream()) {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             byte[] b = new byte[16384];
@@ -2360,9 +3142,9 @@ public class MainActivity extends Activity {
 
     void classifyHls(Tab t, Tab.Video v) {
         final String ua = t.ua;
-        new Thread(() -> {
+        BG.execute(() -> {
             String body = null;
-            try { body = httpText(v.url, ua, v.page, 512 * 1024); } catch (Exception ignored) { }
+            try { body = httpText(v.url, ua, v.page, 512 * 1024, cookies(t.incognito)); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             if (body != null && !body.contains("#EXTM3U")) return;
             boolean audio = false;
             if (body != null && body.contains("#EXT-X-STREAM-INF")) {
@@ -2373,7 +3155,7 @@ public class MainActivity extends Activity {
                     String l = lines[i].trim();
                     if (!l.startsWith("#EXT-X-STREAM-INF")) continue;
                     long bw = 0;
-                    try { bw = Long.parseLong(HlsService.attr(l, "BANDWIDTH")); } catch (Exception ignored) { }
+                    try { bw = Long.parseLong(HlsService.attr(l, "BANDWIDTH")); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                     String res = HlsService.attr(l, "RESOLUTION");
                     for (int j = i + 1; j < lines.length; j++) {
                         String u = lines[j].trim();
@@ -2383,7 +3165,7 @@ public class MainActivity extends Activity {
                             String label = res != null && res.contains("x") ? res.substring(res.indexOf('x') + 1) + "p" : (bw > 0 ? "" : L.t("Поток ") + (v.variants.size() + 1));
                             if (bw > 0) label += (label.isEmpty() ? "" : " · ") + String.format(Locale.US, L.t("%.1f Мбит/с"), bw / 1_000_000.0);
                             v.variants.add(new String[]{label, abs, String.valueOf(bw)});
-                        } catch (Exception ignored) { }
+                        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                         break;
                     }
                 }
@@ -2402,7 +3184,7 @@ public class MainActivity extends Activity {
                 if (isAudio && cur != null) return;
                 setVideo(t, v);
             });
-        }).start();
+        });
     }
 
     void pulseFab() {
@@ -2431,7 +3213,7 @@ public class MainActivity extends Activity {
         if (v == null) { toast(L.t("Видео пока не найдено. Запустите воспроизведение — оно появится автоматически.")); return; }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), dp(8));
+        box.setPaddingRelative(dp(20), dp(4), dp(20), dp(8));
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         FrameLayout badge = new FrameLayout(this);
@@ -2441,7 +3223,7 @@ public class MainActivity extends Activity {
         head.addView(badge, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(14), 0, 0, 0);
+        tx.setPaddingRelative(dp(14), 0, 0, 0);
         TextView tt = Ui.medium(Ui.text(this, v.title == null || v.title.isEmpty() ? L.t("Видео") : v.title, 16, Ui.TEXT));
         tt.setMaxLines(2);
         tt.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -2454,7 +3236,7 @@ public class MainActivity extends Activity {
         final String[] chosen = {v.url};
         if (v.master && !v.variants.isEmpty()) {
             TextView ql = Ui.medium(Ui.text(this, L.t("Качество"), 13, Ui.ACCENT));
-            ql.setPadding(0, dp(18), 0, dp(8));
+            ql.setPaddingRelative(0, dp(18), 0, dp(8));
             box.addView(ql);
             HorizontalScrollView hs = new HorizontalScrollView(this);
             hs.setHorizontalScrollBarEnabled(false);
@@ -2469,7 +3251,7 @@ public class MainActivity extends Activity {
                 all.add(c);
                 c.setOnClickListener(x -> { chosen[0] = o[1]; for (TextView a : all) styleChip(a, a == c); });
                 LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(WRAP, WRAP);
-                cl.rightMargin = dp(8);
+                cl.setMarginEnd(dp(8));
                 chips.addView(c, cl);
             }
             for (TextView a : all) styleChip(a, a == all.get(0));
@@ -2477,24 +3259,24 @@ public class MainActivity extends Activity {
         }
 
         LinearLayout btns = new LinearLayout(this);
-        btns.setPadding(0, dp(20), 0, 0);
+        btns.setPaddingRelative(0, dp(20), 0, 0);
         TextView play = pillButton(L.t("Смотреть"), R.drawable.ic_play, Ui.ACCENT, Ui.dark ? 0xFF202124 : Color.WHITE);
         TextView dl = pillButton(L.t("Скачать"), R.drawable.ic_download, Ui.TONAL, Ui.ON_TONAL);
         LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(0, dp(50), 1);
-        bl.rightMargin = dp(10);
+        bl.setMarginEnd(dp(10));
         btns.addView(play, bl);
         btns.addView(dl, new LinearLayout.LayoutParams(0, dp(50), 1));
         box.addView(btns);
 
         LinearLayout more = new LinearLayout(this);
         more.setGravity(Gravity.CENTER);
-        more.setPadding(0, dp(10), 0, 0);
+        more.setPaddingRelative(0, dp(10), 0, 0);
         TextView cp = Ui.medium(Ui.text(this, L.t("Копировать ссылку"), 14, Ui.ACCENT));
         TextView sh = Ui.medium(Ui.text(this, L.t("Поделиться"), 14, Ui.ACCENT));
-        for (TextView x : new TextView[]{cp, sh}) { x.setPadding(dp(14), dp(10), dp(14), dp(10)); x.setBackground(Ui.ripple(this, true)); more.addView(x); }
+        for (TextView x : new TextView[]{cp, sh}) { x.setPaddingRelative(dp(14), dp(10), dp(14), dp(10)); x.setBackground(Ui.ripple(this, true)); more.addView(x); }
         box.addView(more);
         TextView hint = Ui.text(this, L.t("Показано последнее видео, найденное на этой странице. «Смотреть» открывает его во внешнем плеере (VLC, MX Player и др.) без скачивания."), 12, Ui.TEXT2);
-        hint.setPadding(0, dp(6), 0, 0);
+        hint.setPaddingRelative(0, dp(6), 0, 0);
         box.addView(hint);
 
         final Dialog d = sheet(box);
@@ -2519,7 +3301,7 @@ public class MainActivity extends Activity {
         dr.setBounds(0, 0, dp(20), dp(20));
         t.setCompoundDrawablesRelative(dr, null, null, null);
         t.setCompoundDrawablePadding(dp(8));
-        t.setPadding(dp(16), 0, dp(16), 0);
+        t.setPaddingRelative(dp(16), 0, dp(16), 0);
         t.setBackground(Ui.round(bg, 25));
         t.setForeground(Ui.ripple(this, false));
         return t;
@@ -2536,7 +3318,7 @@ public class MainActivity extends Activity {
         float r = dp(26);
         bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
         wrap.setBackground(bg);
-        wrap.setPadding(0, dp(10), 0, dp(14));
+        wrap.setPaddingRelative(0, dp(10), 0, dp(14));
         View handle = new View(this);
         handle.setBackground(Ui.round(Ui.dark ? 0xFF5F6368 : 0xFFDADCE0, 2));
         LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(dp(36), dp(4));
@@ -2552,7 +3334,7 @@ public class MainActivity extends Activity {
         Window w = d.getWindow();
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.getDecorView().setPadding(0, 0, 0, 0);
+            w.getDecorView().setPaddingRelative(0, 0, 0, 0);
             w.setLayout(MATCH, WRAP);
             w.setGravity(Gravity.BOTTOM);
             w.setWindowAnimations(android.R.style.Animation_InputMethod);
@@ -2569,7 +3351,7 @@ public class MainActivity extends Activity {
             TextView h = Ui.text(this, header, 13, Ui.TEXT2);
             h.setMaxLines(2);
             h.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            h.setPadding(dp(24), 0, dp(24), dp(10));
+            h.setPaddingRelative(dp(24), 0, dp(24), dp(10));
             box.addView(h);
             View dv = new View(this);
             dv.setBackgroundColor(Ui.DIVIDER);
@@ -2579,11 +3361,11 @@ public class MainActivity extends Activity {
         for (Object[] it : items) {
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(24), 0, dp(20), 0);
+            row.setPaddingRelative(dp(24), 0, dp(20), 0);
             row.setBackground(Ui.ripple(this, false));
             row.addView(Ui.icon(this, (Integer) it[0], Ui.TEXT2), new LinearLayout.LayoutParams(dp(24), dp(24)));
             TextView tv = Ui.single(this, (String) it[1], 15, Ui.TEXT);
-            tv.setPadding(dp(20), 0, 0, 0);
+            tv.setPaddingRelative(dp(20), 0, 0, 0);
             row.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
             row.setOnClickListener(v -> { d[0].dismiss(); ((Runnable) it[2]).run(); });
             box.addView(row, new LinearLayout.LayoutParams(MATCH, dp(52)));
@@ -2609,7 +3391,7 @@ public class MainActivity extends Activity {
             it.add(new Object[]{R.drawable.ic_download, L.t("Скачать изображение"), (Runnable) () -> startDownload(img, Saver.clean(fileName(img, null, "image/jpeg")), null, page, uaOf(current))});
             it.add(new Object[]{R.drawable.ic_copy, L.t("Копировать адрес изображения"), (Runnable) () -> copy(img)});
         } else if (img != null) {
-            it.add(new Object[]{R.drawable.ic_download, L.t("Скачать изображение"), (Runnable) () -> withStorage(() -> new Thread(() -> saveDataUrl(img, "image_" + System.currentTimeMillis() + ".png", null)).start())});
+            it.add(new Object[]{R.drawable.ic_download, L.t("Скачать изображение"), (Runnable) () -> withStorage(() -> BG.execute(() -> saveDataUrl(img, "image_" + System.currentTimeMillis() + ".png", null)))});
         }
         if (it.isEmpty()) return;
         sheetMenu(link != null ? link : img, it);
@@ -2617,9 +3399,18 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- omnibox: suggestions & voice
     void updateOmniButtons() {
-        boolean has = omni.hasFocus() && omni.getText().length() > 0;
+        boolean focus = omni.hasFocus();
+        boolean has = focus && omni.getText().length() > 0;
         clearBtn.setVisibility(has ? View.VISIBLE : View.GONE);
-        micBtn.setVisibility(has ? View.GONE : View.VISIBLE);
+        // on a web page the microphone gives its room to the address; it is back while typing / on the home page
+        micBtn.setVisibility(!has && (focus || current == null || current.ntp) ? View.VISIBLE : View.GONE);
+        updateBackBtn();
+    }
+
+    void updateBackBtn() {
+        if (backBtn == null) return;
+        boolean show = current != null && !current.ntp && !omni.hasFocus() && current.web.canGoBack();
+        backBtn.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     void updateSuggestions(String q) {
@@ -2661,9 +3452,9 @@ public class MainActivity extends Activity {
                 : "https://suggestqueries.google.com/complete/search?client=firefox&ie=utf-8&oe=utf-8&hl=" + L.lang + "&q=";
         ui.postDelayed(() -> {
             if (seq != suggestSeq) return;
-            new Thread(() -> {
+            BG.execute(() -> {
                 try {
-                    JSONArray a = new JSONArray(httpText(base + Uri.encode(q), mobileUA, null, 64 * 1024)).getJSONArray(1);
+                    JSONArray a = new JSONArray(httpText(base + Uri.encode(q), mobileUA, null, 64 * 1024, null)).getJSONArray(1);
                     ArrayList<String> out = new ArrayList<>();
                     for (int i = 0; i < a.length() && out.size() < 5; i++) {
                         String s = a.getString(i);
@@ -2674,8 +3465,8 @@ public class MainActivity extends Activity {
                         remoteBox.removeAllViews();
                         for (String s : out) addSuggest(remoteBox, R.drawable.ic_search, s, null, s, true);
                     });
-                } catch (Exception ignored) { }
-            }).start();
+                } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+            });
         }, 160);
     }
 
@@ -2683,7 +3474,7 @@ public class MainActivity extends Activity {
         boolean inc = current != null && current.incognito;
         LinearLayout r = new LinearLayout(this);
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(dp(18), dp(sub == null ? 14 : 10), dp(6), dp(sub == null ? 14 : 10));
+        r.setPaddingRelative(dp(18), dp(sub == null ? 14 : 10), dp(6), dp(sub == null ? 14 : 10));
         r.setBackground(Ui.ripple(this, false));
         if (icon == R.drawable.ic_history || icon == R.drawable.ic_star) {
             if (sub != null && sub.startsWith("http")) r.addView(tileIcon(title, sub, false, 0, 26), new LinearLayout.LayoutParams(dp(26), dp(26)));
@@ -2691,7 +3482,7 @@ public class MainActivity extends Activity {
         } else r.addView(Ui.icon(this, icon, inc ? Ui.INC_TEXT2 : Ui.TEXT2), new LinearLayout.LayoutParams(dp(26), dp(26)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(16), 0, 0, 0);
+        tx.setPaddingRelative(dp(16), 0, 0, 0);
         tx.addView(Ui.single(this, title, 15, inc ? Ui.INC_TEXT : Ui.TEXT));
         if (sub != null) tx.addView(Ui.single(this, sub.startsWith("http") ? displayUrl(sub) : sub, 13, Ui.ACCENT));
         r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
@@ -2720,7 +3511,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(0, dp(6), 0, dp(24));
+        list.setPaddingRelative(0, dp(6), 0, dp(24));
         sv.addView(list);
         final Dialog[] dl = new Dialog[1];
         final Runnable[] fill = new Runnable[1];
@@ -2751,7 +3542,7 @@ public class MainActivity extends Activity {
                     if (title != null) names.add(title);
                     items.add(new Object[]{title, sub, uri, mime, prog, (Runnable) () -> dm.remove(id), ts});
                 }
-            } catch (Exception ignored) { }
+            } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             if (Build.VERSION.SDK_INT >= 29) {
                 String[] proj = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
                         MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_MODIFIED};
@@ -2764,15 +3555,15 @@ public class MainActivity extends Activity {
                         Uri uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0));
                         long ts = c.getLong(4) * 1000;
                         items.add(new Object[]{name, fmtSize(c.getLong(2)) + " · " + df.format(new java.util.Date(ts)), uri, c.getString(3), -1,
-                                (Runnable) () -> { try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) { } }, ts});
+                                (Runnable) () -> { try { getContentResolver().delete(uri, null, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }, ts});
                     }
-                } catch (Exception ignored) { }
+                } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             }
             java.util.Collections.sort(items, (a, b) -> Long.compare((Long) b[6], (Long) a[6]));
             if (items.isEmpty()) {
                 TextView e = Ui.text(this, L.t("Загрузок пока нет.\nФайлы и видео сохраняются в папку «Загрузки/Lasur»."), 15, Ui.TEXT2);
                 e.setGravity(Gravity.CENTER);
-                e.setPadding(dp(24), dp(72), dp(24), 0);
+                e.setPaddingRelative(dp(24), dp(72), dp(24), 0);
                 list.addView(e, new LinearLayout.LayoutParams(MATCH, WRAP));
             }
             for (Object[] it : items) {
@@ -2782,7 +3573,7 @@ public class MainActivity extends Activity {
                 final Runnable del = (Runnable) it[5];
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(10), dp(6), dp(10));
+                r.setPaddingRelative(dp(16), dp(10), dp(6), dp(10));
                 r.setBackground(Ui.ripple(this, false));
                 FrameLayout ic = new FrameLayout(this);
                 ic.setBackground(Ui.round(Ui.TONAL, 12));
@@ -2791,7 +3582,7 @@ public class MainActivity extends Activity {
                 r.addView(ic, new LinearLayout.LayoutParams(dp(44), dp(44)));
                 LinearLayout tx = new LinearLayout(this);
                 tx.setOrientation(LinearLayout.VERTICAL);
-                tx.setPadding(dp(14), 0, dp(6), 0);
+                tx.setPaddingRelative(dp(14), 0, dp(6), 0);
                 tx.addView(Ui.single(this, name == null ? L.t("Файл") : name, 15, Ui.TEXT));
                 tx.addView(Ui.single(this, (String) it[1], 12, Ui.TEXT2));
                 if (prog >= 0) {
@@ -2843,12 +3634,12 @@ public class MainActivity extends Activity {
     void showAppearance() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), 0, dp(20), dp(8));
+        box.setPaddingRelative(dp(20), 0, dp(20), dp(8));
         box.addView(Ui.medium(Ui.text(this, L.t("Оформление"), 20, Ui.TEXT)));
         final Dialog[] d = new Dialog[1];
 
         TextView tl = Ui.medium(Ui.text(this, L.t("Тема"), 13, Ui.ACCENT));
-        tl.setPadding(0, dp(18), 0, dp(8));
+        tl.setPaddingRelative(0, dp(18), 0, dp(8));
         box.addView(tl);
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
@@ -2860,13 +3651,13 @@ public class MainActivity extends Activity {
             styleChip(c, Ui.mode == i);
             c.setOnClickListener(v -> { if (Ui.mode != m) { d[0].dismiss(); applyTheme(m, Ui.accent); } });
             LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(WRAP, WRAP);
-            cl.rightMargin = dp(8);
+            cl.setMarginEnd(dp(8));
             modes.addView(c, cl);
         }
         box.addView(hs);
 
         TextView al = Ui.medium(Ui.text(this, L.t("Цвет"), 13, Ui.ACCENT));
-        al.setPadding(0, dp(18), 0, dp(8));
+        al.setPaddingRelative(0, dp(18), 0, dp(8));
         box.addView(al);
         HorizontalScrollView hs2 = new HorizontalScrollView(this);
         hs2.setHorizontalScrollBarEnabled(false);
@@ -2885,13 +3676,13 @@ public class MainActivity extends Activity {
             sw.setContentDescription(L.t(Ui.ACCENT_NAMES[i]));
             sw.setOnClickListener(v -> { if (Ui.accent != a) { d[0].dismiss(); applyTheme(Ui.mode, a); } });
             LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(44), dp(44));
-            sl.rightMargin = dp(12);
+            sl.setMarginEnd(dp(12));
             acc.addView(sw, sl);
         }
         box.addView(hs2);
 
         TextView wl = Ui.medium(Ui.text(this, L.t("Обои главной страницы"), 13, Ui.ACCENT));
-        wl.setPadding(0, dp(18), 0, dp(8));
+        wl.setPaddingRelative(0, dp(18), 0, dp(8));
         box.addView(wl);
         int cur = store.p.getInt("wp", Wallpaper.NONE);
         ArrayList<Integer> ids = new ArrayList<>();
@@ -2904,7 +3695,7 @@ public class MainActivity extends Activity {
             final int id = ids.get(k);
             FrameLayout card = new FrameLayout(this);
             card.setClipToOutline(true);
-            card.setBackground(Ui.round(Ui.dark ? 0xFF3C4043 : 0xFFF1F3F4, 14));
+            card.setBackground(Ui.round(Ui.CHIP, 14));
             String label;
             if (id == Wallpaper.NONE) {
                 label = L.t("Без обоев");
@@ -2931,7 +3722,7 @@ public class MainActivity extends Activity {
             TextView lb = Ui.single(this, label, 12, id == Wallpaper.NONE || (id == Wallpaper.CUSTOM && !Wallpaper.customFile(this).exists()) ? Ui.TEXT : Color.WHITE);
             lb.setShadowLayer(dp(3), 0, dp(1), id >= 0 ? 0x99000000 : 0);
             lb.setGravity(Gravity.CENTER);
-            lb.setPadding(dp(4), 0, dp(4), dp(8));
+            lb.setPaddingRelative(dp(4), 0, dp(4), dp(8));
             card.addView(lb, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM));
             if (id == cur) card.setForeground(Ui.stroke(Color.TRANSPARENT, Ui.ACCENT, 3, 14));
             card.setOnClickListener(v -> {
@@ -2995,7 +3786,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(24));
+        box.setPaddingRelative(0, 0, 0, dp(24));
         sv.addView(box);
         section(box, L.t("Оформление"));
         int wp = store.p.getInt("wp", Wallpaper.NONE);
@@ -3007,7 +3798,7 @@ public class MainActivity extends Activity {
         zs[0] = actionRow(box, L.t("Масштаб текста"), store.p.getInt("zoom", 100) + "%", () -> {
             int curZ = store.p.getInt("zoom", 100), sel = 2;
             for (int i = 0; i < zv.length; i++) if (zv[i] == curZ) sel = i;
-            new AlertDialog.Builder(this).setTitle(L.t("Масштаб текста")).setSingleChoiceItems(zooms, sel, (d, w) -> {
+            dialog().setTitle(L.t("Масштаб текста")).setSingleChoiceItems(zooms, sel, (d, w) -> {
                 store.p.edit().putInt("zoom", zv[w]).apply();
                 for (Tab t : tabs) t.web.getSettings().setTextZoom(zv[w]);
                 zs[0].setText(zooms[w]);
@@ -3022,7 +3813,7 @@ public class MainActivity extends Activity {
         actionRow(box, L.t("Язык"), langName(), this::pickLanguage);
         final TextView[] engSub = new TextView[1];
         engSub[0] = actionRow(box, L.t("Поисковая система"), L.t(Store.ENGINES[store.engine()]), () ->
-                new AlertDialog.Builder(this).setTitle(L.t("Поисковая система")).setSingleChoiceItems(L.ta(Store.ENGINES), store.engine(), (d, w) -> {
+                dialog().setTitle(L.t("Поисковая система")).setSingleChoiceItems(L.ta(Store.ENGINES), store.engine(), (d, w) -> {
                     store.setEngine(w); engSub[0].setText(L.t(Store.ENGINES[w])); d.dismiss();
                 }).show());
         switchRow(box, L.t("Поисковые подсказки"), L.t("Подсказки поисковика при вводе запроса"), store.bool("suggest", true), v -> store.setBool("suggest", v));
@@ -3031,6 +3822,8 @@ public class MainActivity extends Activity {
         switchRow(box, L.t("Восстанавливать вкладки"), L.t("Открывать прошлые вкладки при запуске"), store.restoreTabs(), v -> store.setBool("restore", v));
         if (Math.round(scrWpx() / Ui.density) >= 600)
             switchRow(box, L.t("Панель вкладок"), L.t("Вкладки над адресной строкой на большом экране"), store.bool("tabStrip", true), v -> { store.setBool("tabStrip", v); refreshStrip(); refreshChrome(); });
+        switchRow(box, L.t("Адресная строка снизу"), L.t("Удобнее нажимать одной рукой"), store.bottomBar(), v -> { store.setBool("bottomBar", v); layoutBars(); refreshChrome(); });
+        switchRow(box, L.t("Скрывать панель при прокрутке"), L.t("Больше места для страницы"), store.hideOnScroll(), v -> { store.setBool("hideBar", v); if (!v) setBarsHidden(false); });
         actionRow(box, L.t("Сделать браузером по умолчанию"), L.t("Открывать ссылки из других приложений в Lasur"), () -> {
             makeDefaultBrowser();
         });
@@ -3043,10 +3836,10 @@ public class MainActivity extends Activity {
         final TextView[] listSub = new TextView[1];
         listSub[0] = actionRow(box, L.t("Обновить фильтры"), AdBlocker.stats(), () -> {
             listSub[0].setText(L.t("Загрузка…"));
-            new Thread(() -> {
+            BG.execute(() -> {
                 try { AdBlocker.update(getApplicationContext()); ui.post(() -> listSub[0].setText(L.t("Обновлено · ") + AdBlocker.stats())); }
                 catch (Exception e) { ui.post(() -> listSub[0].setText(L.t("Ошибка: ") + e.getMessage())); }
-            }).start();
+            });
         });
         actionRow(box, L.t("Заблокировано всего"), AdBlocker.totalBlocked.get() + L.t(" запросов рекламы и трекеров"), null);
         if (!AdBlocker.whitelist.isEmpty())
@@ -3063,7 +3856,7 @@ public class MainActivity extends Activity {
         actionRow(box, L.t("Пароли"), passwords.list.isEmpty() ? L.t("Сохранение и автозаполнение паролей") : L.t("Сохранено: ") + passwords.list.size(), this::showPasswords);
         section(box, L.t("Конфиденциальность"));
         actionRow(box, L.t("Очистить историю"), L.t("Удалить всю историю просмотров"), () -> { store.history.clear(); store.saveHistory(); toast(L.t("История очищена")); });
-        actionRow(box, L.t("Очистить cookies и данные сайтов"), L.t("Вы выйдете из аккаунтов на сайтах"), () -> new AlertDialog.Builder(this)
+        actionRow(box, L.t("Очистить cookies и данные сайтов"), L.t("Вы выйдете из аккаунтов на сайтах"), () -> dialog()
                 .setMessage(L.t("Удалить cookies, кэш и данные всех сайтов?"))
                 .setPositiveButton(L.t("Удалить"), (d, w) -> {
                     CookieManager.getInstance().removeAllCookies(null);
@@ -3073,7 +3866,7 @@ public class MainActivity extends Activity {
                     toast(L.t("Данные удалены"));
                 }).setNegativeButton(L.t("Отмена"), null).show());
         section(box, L.t("О браузере"));
-        actionRow(box, "Lasur 1.7.4", L.t("Браузер без рекламы с загрузкой видео"), null);
+        actionRow(box, "Lasur " + BuildConfig.VERSION_NAME, L.t("Браузер без рекламы с загрузкой видео"), null);
         settingsDialog = fullDialog(L.t("Настройки"), sv, null, null);
     }
 
@@ -3085,8 +3878,7 @@ public class MainActivity extends Activity {
         ArrayList<String> h = new ArrayList<>();
         if (v.page != null) { h.add("Referer"); h.add(v.page); }
         h.add("User-Agent"); h.add(uaOf(t));
-        String ck = CookieManager.getInstance().getCookie(v.url);
-        if (ck != null) { h.add("Cookie"); h.add(ck); }
+        // Session cookies are deliberately NOT handed to third-party players (they would get the user's logins).
         i.putExtra("headers", h.toArray(new String[0]));
         i.putExtra("title", v.title);
         i.putExtra("http-referrer", v.page);
@@ -3115,56 +3907,32 @@ public class MainActivity extends Activity {
     android.content.BroadcastReceiver dlReceiver;
     int fsScrollY = -1; String fsJsScroll; Tab fsTab; long fsExitAt;
 
-    static final String PAUSE_JS = "(function(){try{document.querySelectorAll('video,audio').forEach(function(m){if(!m.paused)m.pause()})}catch(e){}})();";
-    static final String SCROLL_JS = "(function(){var e=document.scrollingElement||document.documentElement;return (window.scrollX||0)+','+(window.scrollY||e.scrollTop||0)})()";
 
     /** Tells the browser whether a downward drag that starts here may become pull-to-refresh. */
-    static final String PTR_JS = "(function(){if(window.__lumenPtr)return;window.__lumenPtr=1;"
-            + "function ok(e){try{if(e.touches.length>1)return 0;var se=document.scrollingElement||document.documentElement;"
-            + "if((window.scrollY||0)>0||(se&&se.scrollTop>0))return 0;if(document.fullscreenElement||document.webkitFullscreenElement)return 0;"
-            + "var vh=window.innerHeight||1;for(var n=e.target;n&&n.nodeType==1&&n!=document.body&&n!=document.documentElement;n=n.parentElement){"
-            + "var tg=n.tagName;if(tg=='VIDEO'||tg=='CANVAS'||tg=='IFRAME'||tg=='EMBED'||tg=='OBJECT'||tg=='SELECT'||tg=='TEXTAREA'||(tg=='INPUT'&&n.type=='range'))return 0;"
-            + "if(n.isContentEditable)return 0;if(n.scrollTop>0)return 0;var cs=getComputedStyle(n),ta=cs.touchAction;"
-            + "if(ta=='none'||ta=='pan-x'||ta=='pinch-zoom'||ta=='pan-left'||ta=='pan-right')return 0;"
-            + "if(n.getElementsByTagName('video').length&&n.getBoundingClientRect().height<vh*0.85)return 0;"
-            + "var r=n.getAttribute('role');if(r=='slider'||r=='application')return 0;"
-            + "var oy=cs.overflowY,sn=cs.scrollSnapType||'';if(sn.indexOf('y')>=0||sn.indexOf('block')>=0||sn.indexOf('both')>=0)return 0;"
-            + "if((oy=='auto'||oy=='scroll'||oy=='overlay')&&n.scrollHeight>n.clientHeight+4)return 0;}"
-            + "var t0=e.touches[0],vs=document.getElementsByTagName('video');for(var i=0;i<vs.length;i++){var b=vs[i].getBoundingClientRect();"
-            + "if(b.width*b.height>window.innerWidth*vh*0.25&&t0.clientX>=b.left&&t0.clientX<=b.right&&t0.clientY>=b.top&&t0.clientY<=b.bottom)return 0;}"
-            + "var rs=getComputedStyle(document.documentElement).scrollSnapType+getComputedStyle(document.body).scrollSnapType;if(/y|block|both/.test(rs))return 0;"
-            + "return 1}catch(x){return 1}}"
-            + "var sent=0;window.addEventListener('touchstart',function(e){sent=0;LumenBridge.ptr(ok(e))},{capture:true,passive:true});"
-            + "window.addEventListener('touchmove',function(e){if(e.defaultPrevented&&!sent){sent=1;LumenBridge.ptr(0)}},{passive:true});})();";
 
     /** Detects login forms: reports typed credentials, focus on login fields and provides a fill function. */
-    static final String PW_JS = "(function(){if(window.__lumenPw)return;window.__lumenPw=1;var B=LumenBridge;"
-            + "function vis(e){return !!(e&&(e.offsetWidth||e.offsetHeight||e.getClientRects().length))}"
-            + "function pws(){return Array.prototype.filter.call(document.querySelectorAll('input[type=password]'),vis)}"
-            + "function txt(e){var t=(e.type||'text').toLowerCase();return e.tagName=='INPUT'&&(t=='text'||t=='email'||t=='tel')}"
-            + "function isU(e){if(!e||!txt(e))return false;var a=((e.autocomplete||'')+' '+(e.name||'')+' '+(e.id||'')+' '+(e.placeholder||''));"
-            + "return e.type=='email'||/user|login|email|e-mail|phone|mail|account|identifier|логин|почт|телефон/i.test(a)}"
-            + "function uf(p){var root=p&&p.form?p.form:document,ins=root.querySelectorAll('input'),u=null;"
-            + "for(var i=0;i<ins.length;i++){var e=ins[i];if(e==p)break;if(txt(e)&&vis(e))u=e;}return u}"
-            + "function cap(){var ps=pws(),p=null;for(var i=0;i<ps.length;i++)if(ps[i].value)p=ps[i];if(!p)return false;"
-            + "var u=uf(p),uv=u?u.value:'';if(!uv){try{uv=sessionStorage.getItem('__lumenU')||''}catch(x){}}B.pwPending(location.href,uv,p.value);return true}"
-            + "function sub(){if(cap()){B.pwSubmit();setTimeout(function(){if(!pws().some(function(p){return p.value}))B.pwDone()},2500)}}"
-            + "document.addEventListener('submit',sub,true);"
-            + "document.addEventListener('keydown',function(e){if(e.key=='Enter'&&e.target&&e.target.tagName=='INPUT'&&pws().length)sub()},true);"
-            + "document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('button,input[type=submit],input[type=button],[role=button],a');"
-            + "if(b&&pws().some(function(p){return p.value}))sub()},true);"
-            + "document.addEventListener('change',function(e){var t=e.target;if(t&&(isU(t)||(txt(t)&&!pws().length))){try{sessionStorage.setItem('__lumenU',t.value)}catch(x){}}},true);"
-            + "document.addEventListener('focusin',function(e){var t=e.target;if(!t||t.tagName!='INPUT')return;"
-            + "if(t.type=='password')B.pwFocus(1);else if(isU(t)||(pws().length&&uf(pws()[0])==t))B.pwFocus(0)},true);"
-            + "document.addEventListener('focusout',function(e){if(e.target&&e.target.tagName=='INPUT')B.pwBlur()},true);"
-            + "window.__lumenFill=function(u,p,auto){function set(e,v){if(!e)return;try{var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d.set.call(e,v)}catch(x){e.value=v}"
-            + "e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))}"
-            + "var ps=pws(),a=document.activeElement;if(ps.length){var pf=a&&a.type=='password'&&vis(a)?a:ps[0];if(auto&&pf.value)return;"
-            + "var u0=uf(pf)||(a&&a!=pf&&txt(a)?a:null);if(u0&&u&&!(auto&&u0.value))set(u0,u);set(pf,p);return}"
-            + "if(!auto&&a&&txt(a)&&u)set(a,u)};})();";
 
     // ---------------------------------------------------------------- snackbar & notices
+    /** AlertDialog matching the browser palette (surface, corner radius, accent buttons). */
+    AlertDialog.Builder dialog() { return new StyledBuilder(this); }
+
+    static final class StyledBuilder extends AlertDialog.Builder {
+        StyledBuilder(Context c) { super(c); }
+        @Override public AlertDialog show() {
+            AlertDialog d = super.show();
+            android.view.Window w = d.getWindow();
+            if (w != null) w.setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(Ui.round(Ui.MENU_SURFACE, 24), Ui.dp(16)));
+            for (int b : new int[]{AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL}) {
+                android.widget.Button bt = d.getButton(b);
+                if (bt != null) bt.setTextColor(Ui.ACCENT);
+            }
+            return d;
+        }
+    }
+
     void toast(String s) { snack(s, null, null); }
+    /** System toast: stays visible above full-screen dialogs. */
+    void longToast(String s) { ui.post(() -> Toast.makeText(this, s, Toast.LENGTH_LONG).show()); }
 
     void snack(String msg, String action, Runnable r) {
         if (Looper.myLooper() != Looper.getMainLooper()) { ui.post(() -> snack(msg, action, r)); return; }
@@ -3174,8 +3942,8 @@ public class MainActivity extends Activity {
         LinearLayout s = new LinearLayout(this);
         s.setGravity(Gravity.CENTER_VERTICAL);
         s.setMinimumHeight(dp(50));
-        s.setPadding(dp(18), dp(6), dp(action != null ? 6 : 18), dp(6));
-        s.setBackground(Ui.round(Ui.dark ? 0xFFE8EAED : 0xFF303134, 14));
+        s.setPaddingRelative(dp(18), dp(6), dp(action != null ? 6 : 18), dp(6));
+        s.setBackground(Ui.round(Ui.SNACK, 14));
         s.setElevation(dp(10));
         TextView tv = Ui.text(this, msg, 14, Ui.dark ? 0xFF202124 : 0xFFF1F3F4);
         tv.setMaxLines(3);
@@ -3183,7 +3951,7 @@ public class MainActivity extends Activity {
         s.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
         if (action != null) {
             TextView a = Ui.medium(Ui.text(this, action, 14, Ui.dark ? Ui.ACCENT_LIGHT[Ui.accent] : Ui.ACCENT_DARK[Ui.accent]));
-            a.setPadding(dp(14), dp(12), dp(14), dp(12));
+            a.setPaddingRelative(dp(14), dp(12), dp(14), dp(12));
             a.setBackground(Ui.ripple(this, true));
             a.setOnClickListener(v -> { hideSnack(); if (r != null) ui.post(r); });
             s.addView(a);
@@ -3237,12 +4005,12 @@ public class MainActivity extends Activity {
         if (noticeView != null) root.removeView(noticeView);
         LinearLayout n = new LinearLayout(this);
         n.setGravity(Gravity.CENTER_VERTICAL);
-        n.setPadding(dp(14), dp(10), dp(18), dp(10));
+        n.setPaddingRelative(dp(14), dp(10), dp(18), dp(10));
         n.setBackground(Ui.round(0xE6202124, 22));
         n.setElevation(dp(8));
         n.addView(Ui.icon(this, icon, Color.WHITE), new LinearLayout.LayoutParams(dp(20), dp(20)));
         TextView tv = Ui.text(this, msg, 14, Color.WHITE);
-        tv.setPadding(dp(10), 0, 0, 0);
+        tv.setPaddingRelative(dp(10), 0, 0, 0);
         n.addView(tv);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         lp.topMargin = dp(28);
@@ -3267,8 +4035,9 @@ public class MainActivity extends Activity {
         c.thumb = t.thumb;
         c.url = t.pendingUrl != null ? t.pendingUrl : t.web.getUrl();
         if (c.url == null) c.url = t.url;
-        if (t.pendingUrl == null && t.web.getUrl() != null) {
-            try { Bundle b = new Bundle(); if (t.web.saveState(b) != null) c.state = b; } catch (Exception ignored) { }
+        if (t.pendingState != null) c.state = t.pendingState;
+        else if (t.pendingUrl == null && t.web.getUrl() != null) {
+            try { Bundle b = new Bundle(); if (t.web.saveState(b) != null) c.state = b; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         }
         return c;
     }
@@ -3298,7 +4067,7 @@ public class MainActivity extends Activity {
                 t.ntp = false;
                 t.url = c.url;
                 boolean ok = false;
-                if (c.state != null) { try { ok = t.web.restoreState(c.state) != null; } catch (Exception ignored) { } }
+                if (c.state != null) { try { ok = t.web.restoreState(c.state) != null; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
                 if (!ok) t.pendingUrl = c.url;
             }
             last = t;
@@ -3310,7 +4079,7 @@ public class MainActivity extends Activity {
         if (auto != null && auto != last && tabs.contains(auto) && auto.ntp && !auto.web.canGoBack() && tabs.size() > 1) {
             if (auto == current) selectTab(last);
             tabs.remove(auto);
-            try { auto.web.destroy(); } catch (Exception ignored) { }
+            try { auto.web.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         }
         if (sw) { switcherIncognito = last.incognito; buildSwitcher(); }
         updateTabCount();
@@ -3337,7 +4106,7 @@ public class MainActivity extends Activity {
     }
 
     static String hostOf(String u) {
-        try { String h = Uri.parse(u).getHost(); if (h != null) return h.startsWith("www.") ? h.substring(4) : h; } catch (Exception ignored) { }
+        try { String h = Uri.parse(u).getHost(); if (h != null) return h.startsWith("www.") ? h.substring(4) : h; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         return u == null ? "" : u;
     }
 
@@ -3348,11 +4117,11 @@ public class MainActivity extends Activity {
 
     void buildPtr() {
         ptr = new FrameLayout(this);
-        ptr.setBackground(Ui.oval(Ui.dark ? 0xFF3C4043 : Color.WHITE));
+        ptr.setBackground(Ui.oval(Ui.PTR));
         ptr.setElevation(dp(6));
         ptrIcon = Ui.icon(this, R.drawable.ic_refresh, Ui.ACCENT);
         ptrIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        ptrIcon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        ptrIcon.setPaddingRelative(dp(9), dp(9), dp(9), dp(9));
         ptr.addView(ptrIcon, new FrameLayout.LayoutParams(MATCH, MATCH));
         ptr.setVisibility(View.GONE);
         ptr.setTranslationY(-dp(60));
@@ -3398,7 +4167,7 @@ public class MainActivity extends Activity {
                     ptr.animate().cancel();
                     ptr.setVisibility(View.VISIBLE);
                     ptr.bringToFront();
-                    ptr.setBackground(Ui.oval(Ui.dark ? 0xFF3C4043 : Color.WHITE));
+                    ptr.setBackground(Ui.oval(Ui.PTR));
                     Ui.tint(ptrIcon, Ui.ACCENT);
                     updatePull(0);
                     return true;
@@ -3434,14 +4203,14 @@ public class MainActivity extends Activity {
         if (ready != ptrReady) {
             ptrReady = ready;
             if (ready) ptr.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-            ptr.setBackground(Ui.oval(ready ? Ui.ACCENT : (Ui.dark ? 0xFF3C4043 : Color.WHITE)));
+            ptr.setBackground(Ui.oval(ready ? Ui.ACCENT : Ui.PTR));
             Ui.tint(ptrIcon, ready ? (Ui.dark ? 0xFF202124 : Color.WHITE) : Ui.ACCENT);
         }
     }
 
     void startRefresh(Tab t) {
         ptrSpinning = true;
-        ptr.setBackground(Ui.oval(Ui.dark ? 0xFF3C4043 : Color.WHITE));
+        ptr.setBackground(Ui.oval(Ui.PTR));
         Ui.tint(ptrIcon, Ui.ACCENT);
         ptr.animate().translationY(dp(20)).scaleX(1f).scaleY(1f).alpha(1f).setDuration(160).start();
         ptrSpin = android.animation.ObjectAnimator.ofFloat(ptr, "rotation", ptr.getRotation(), ptr.getRotation() + 360f);
@@ -3467,7 +4236,7 @@ public class MainActivity extends Activity {
         fsScrollY = t.web.getScrollY();
         fsJsScroll = null;
         try { t.web.evaluateJavascript(SCROLL_JS, v -> { if (v != null && v.matches("\"[\\d.]+,[\\d.]+\"")) fsJsScroll = v.replace("\"", ""); }); }
-        catch (Exception ignored) { }
+        catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     void restoreScroll() {
@@ -3503,21 +4272,21 @@ public class MainActivity extends Activity {
     void offerSave(String site, String user, String pass, boolean update) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(22), dp(4), dp(22), dp(8));
+        box.setPaddingRelative(dp(22), dp(4), dp(22), dp(8));
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         FrameLayout badge = new FrameLayout(this);
         badge.setBackground(Ui.round(Ui.TONAL, 14));
         ImageView bi = Ui.icon(this, R.drawable.ic_key, Ui.ON_TONAL);
         bi.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        bi.setPadding(dp(12), dp(12), dp(12), dp(12));
+        bi.setPaddingRelative(dp(12), dp(12), dp(12), dp(12));
         badge.addView(bi, new FrameLayout.LayoutParams(MATCH, MATCH));
         head.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(14), 0, 0, 0);
+        tx.setPaddingRelative(dp(14), 0, 0, 0);
         tx.addView(Ui.medium(Ui.text(this, update ? L.t("Обновить пароль?") : L.t("Сохранить пароль?"), 18, Ui.TEXT)));
-        tx.addView(Ui.single(this, site, 13, Ui.TEXT2));
+        tx.addView(Ui.single(this, Passwords.label(site), 13, Ui.TEXT2));
         head.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
         box.addView(head);
         EditText ue = new EditText(this);
@@ -3533,7 +4302,7 @@ public class MainActivity extends Activity {
         LinearLayout pr = new LinearLayout(this);
         pr.setGravity(Gravity.CENTER_VERTICAL);
         final TextView pt = Ui.text(this, mask(pass), 16, Ui.TEXT);
-        pt.setPadding(dp(4), 0, 0, 0);
+        pt.setPaddingRelative(dp(4), 0, 0, 0);
         pr.addView(pt, new LinearLayout.LayoutParams(0, WRAP, 1));
         ImageView eye = Ui.iconBtn(this, R.drawable.ic_eye, Ui.TEXT2);
         final boolean[] shown = {false};
@@ -3542,9 +4311,9 @@ public class MainActivity extends Activity {
         box.addView(pr);
         LinearLayout btns = new LinearLayout(this);
         btns.setGravity(Gravity.CENTER_VERTICAL);
-        btns.setPadding(0, dp(14), 0, 0);
+        btns.setPaddingRelative(0, dp(14), 0, 0);
         TextView never = Ui.medium(Ui.text(this, update ? L.t("Не сейчас") : L.t("Никогда"), 15, Ui.ACCENT));
-        never.setPadding(dp(14), dp(12), dp(14), dp(12));
+        never.setPaddingRelative(dp(14), dp(12), dp(14), dp(12));
         never.setBackground(Ui.ripple(this, true));
         btns.addView(never);
         btns.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
@@ -3578,22 +4347,22 @@ public class MainActivity extends Activity {
             content.addView(pwBar, new FrameLayout.LayoutParams(MATCH, dp(52), Gravity.BOTTOM));
         }
         pwBar.removeAllViews();
-        pwBar.setBackgroundColor(t.incognito ? 0xFF303134 : (Ui.dark ? Ui.SURFACE : Color.WHITE));
-        pwBar.setPadding(dp(12), 0, dp(4), 0);
+        pwBar.setBackgroundColor(t.incognito ? Ui.INC_SURFACE : (Ui.dark ? Ui.SURFACE : Color.WHITE));
+        pwBar.setPaddingRelative(dp(12), 0, dp(4), 0);
         pwBar.addView(Ui.icon(this, R.drawable.ic_key, Ui.ACCENT), new LinearLayout.LayoutParams(dp(22), dp(22)));
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this);
         chips.setGravity(Gravity.CENTER_VERTICAL);
-        chips.setPadding(dp(8), 0, 0, 0);
+        chips.setPaddingRelative(dp(8), 0, 0, 0);
         hs.addView(chips);
         for (Passwords.Cred c : cs) {
             TextView ch = Ui.medium(Ui.single(this, c.user.isEmpty() ? L.t("Без имени · ••••") : c.user, 14, Ui.ON_TONAL));
-            ch.setPadding(dp(14), dp(8), dp(14), dp(8));
+            ch.setPaddingRelative(dp(14), dp(8), dp(14), dp(8));
             ch.setBackground(Ui.round(Ui.TONAL, 16));
             ch.setOnClickListener(v -> fillCred(t, c));
             LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(WRAP, WRAP);
-            cl.rightMargin = dp(8);
+            cl.setMarginEnd(dp(8));
             chips.addView(ch, cl);
         }
         pwBar.addView(hs, new LinearLayout.LayoutParams(0, MATCH, 1));
@@ -3614,19 +4383,30 @@ public class MainActivity extends Activity {
         if (site == null || !site.equals(c.site)) { hidePwBar(); return; }
         String p = passwords.pass(c);
         if (p == null) { toast(L.t("Не удалось расшифровать пароль")); return; }
-        t.web.evaluateJavascript("window.__lumenFill&&window.__lumenFill(" + JSONObject.quote(c.user) + "," + JSONObject.quote(p) + ",0)", null);
+        t.web.evaluateJavascript(FILL_JS + "(" + JSONObject.quote(originOf(t.web.getUrl())) + "," + JSONObject.quote(c.user) + "," + JSONObject.quote(p) + ",0)", null);
         hidePwBar();
     }
 
     void autoFill(Tab t) {
-        if (!store.bool("pwFill", true) || !store.bool("pwAuto", true)) return;
+        if (!store.bool("pwFill", true) || !store.bool("pwAuto", false)) return;
         String site = Passwords.site(t.web.getUrl());
         ArrayList<Passwords.Cred> cs = passwords.forSite(site);
         if (cs.size() != 1) return;
         String p = passwords.pass(cs.get(0));
         if (p == null) return;
-        t.web.evaluateJavascript("window.__lumenFill&&window.__lumenFill(" + JSONObject.quote(cs.get(0).user) + "," + JSONObject.quote(p) + ",1)", null);
+        t.web.evaluateJavascript(FILL_JS + "(" + JSONObject.quote(originOf(t.web.getUrl())) + "," + JSONObject.quote(cs.get(0).user) + "," + JSONObject.quote(p) + ",1)", null);
     }
+
+    /** scheme://host[:port] exactly as window.location.origin reports it. */
+    static String originOf(String url) {
+        try {
+            Uri u = Uri.parse(url);
+            if (u.getScheme() == null || u.getHost() == null) return "null";
+            return u.getScheme().toLowerCase(Locale.ROOT) + "://" + u.getHost().toLowerCase(Locale.ROOT) + (u.getPort() > 0 ? ":" + u.getPort() : "");
+        } catch (Exception e) { return "null"; }
+    }
+
+    static String siteUrl(String site) { return site.startsWith("http://") ? site : "https://" + site; }
 
     void withAuth(Runnable r) {
         android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
@@ -3653,14 +4433,14 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(24));
+        box.setPaddingRelative(0, 0, 0, dp(24));
         sv.addView(box);
         final Runnable[] fill = new Runnable[1];
         fill[0] = () -> {
             box.removeAllViews();
             switchRow(box, L.t("Предлагать сохранять пароли"), L.t("После входа на сайт"), store.bool("pwSave", true), v -> store.setBool("pwSave", v));
             switchRow(box, L.t("Автозаполнение"), L.t("Показывать сохранённые аккаунты над клавиатурой"), store.bool("pwFill", true), v -> store.setBool("pwFill", v));
-            switchRow(box, L.t("Заполнять при открытии"), L.t("Если для сайта сохранён один аккаунт"), store.bool("pwAuto", true), v -> store.setBool("pwAuto", v));
+            switchRow(box, L.t("Заполнять при открытии"), L.t("Если для сайта сохранён один аккаунт"), store.bool("pwAuto", false), v -> store.setBool("pwAuto", v));
             java.util.Set<String> nv = passwords.never();
             if (!nv.isEmpty()) actionRow(box, L.t("Сайты-исключения: ") + nv.size(), L.t("Нажмите, чтобы снова предлагать сохранение везде"), () -> {
                 passwords.clearNever(); toast(L.t("Исключения очищены")); fill[0].run();
@@ -3668,37 +4448,37 @@ public class MainActivity extends Activity {
             section(box, passwords.list.isEmpty() ? L.t("Сохранённые пароли") : L.t("Сохранённые пароли · ") + passwords.list.size());
             if (passwords.list.isEmpty()) {
                 TextView e = Ui.text(this, L.t("Пока пусто. Войдите на любой сайт — Lasur предложит сохранить пароль. Пароли шифруются ключом в защищённом хранилище Android."), 14, Ui.TEXT2);
-                e.setPadding(dp(20), dp(8), dp(20), 0);
+                e.setPaddingRelative(dp(20), dp(8), dp(20), 0);
                 box.addView(e);
             }
             for (Passwords.Cred c : new ArrayList<>(passwords.list)) {
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(10), dp(8), dp(10));
+                r.setPaddingRelative(dp(16), dp(10), dp(8), dp(10));
                 r.setBackground(Ui.ripple(this, false));
-                r.addView(tileIcon(c.site, "https://" + c.site, false, 0, 36), new LinearLayout.LayoutParams(dp(36), dp(36)));
+                r.addView(tileIcon(c.site, siteUrl(c.site), false, 0, 36), new LinearLayout.LayoutParams(dp(36), dp(36)));
                 LinearLayout tx = new LinearLayout(this);
                 tx.setOrientation(LinearLayout.VERTICAL);
-                tx.setPadding(dp(16), 0, dp(8), 0);
-                tx.addView(Ui.single(this, c.site, 15, Ui.TEXT));
+                tx.setPaddingRelative(dp(16), 0, dp(8), 0);
+                tx.addView(Ui.single(this, Passwords.label(c.site), 15, Ui.TEXT));
                 tx.addView(Ui.single(this, c.user.isEmpty() ? L.t("без имени пользователя") : c.user, 13, Ui.TEXT2));
                 r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
                 r.setOnClickListener(v -> {
                     ArrayList<Object[]> m = new ArrayList<>();
                     m.add(new Object[]{R.drawable.ic_eye, L.t("Показать пароль"), (Runnable) () -> withAuth(() -> {
                         String p = passwords.pass(c);
-                        new AlertDialog.Builder(this).setTitle(c.site).setMessage((c.user.isEmpty() ? "" : c.user + "\n\n") + (p == null ? L.t("Не удалось расшифровать") : p))
+                        dialog().setTitle(Passwords.label(c.site)).setMessage((c.user.isEmpty() ? "" : c.user + "\n\n") + (p == null ? L.t("Не удалось расшифровать") : p))
                                 .setPositiveButton(L.t("Готово"), null).setNeutralButton(L.t("Копировать"), (d, w) -> { if (p != null) copySecret(p); }).show();
                     })});
                     if (!c.user.isEmpty()) m.add(new Object[]{R.drawable.ic_copy, L.t("Копировать имя пользователя"), (Runnable) () -> copy(c.user)});
                     m.add(new Object[]{R.drawable.ic_key, L.t("Копировать пароль"), (Runnable) () -> withAuth(() -> { String p = passwords.pass(c); if (p != null) copySecret(p); })});
-                    m.add(new Object[]{R.drawable.ic_globe, L.t("Открыть сайт"), (Runnable) () -> newTab("https://" + c.site, false, true, null)});
+                    m.add(new Object[]{R.drawable.ic_globe, L.t("Открыть сайт"), (Runnable) () -> newTab(siteUrl(c.site), false, true, null)});
                     m.add(new Object[]{R.drawable.ic_close, L.t("Удалить"), (Runnable) () -> {
                         passwords.remove(c);
                         fill[0].run();
                         snack(L.t("Пароль удалён"), L.t("Отменить"), () -> { passwords.list.add(0, c); passwords.save(); fill[0].run(); });
                     }});
-                    sheetMenu(c.site + (c.user.isEmpty() ? "" : " · " + c.user), m);
+                    sheetMenu(Passwords.label(c.site) + (c.user.isEmpty() ? "" : " · " + c.user), m);
                 });
                 box.addView(r, new LinearLayout.LayoutParams(MATCH, WRAP));
             }
@@ -3728,7 +4508,7 @@ public class MainActivity extends Activity {
                             } catch (Exception e) { showDownloads(); }
                         });
                     } else if (st == DownloadManager.STATUS_FAILED) snack(L.t("Не удалось загрузить: ") + title, L.t("Загрузки"), MainActivity.this::showDownloads);
-                } catch (Exception ignored) { }
+                } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             }
         };
         android.content.IntentFilter f = new android.content.IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
@@ -3763,7 +4543,7 @@ public class MainActivity extends Activity {
         try {
             t.web.saveWebArchive(tmp.getAbsolutePath(), false, res -> {
                 if (res == null || !tmp.exists()) { toast(L.t("Не удалось сохранить страницу")); return; }
-                withStorage(() -> new Thread(() -> {
+                withStorage(() -> BG.execute(() -> {
                     try (java.io.FileInputStream in = new java.io.FileInputStream(tmp)) {
                         Saver s = Saver.create(this, name, "multipart/related");
                         byte[] b = new byte[65536];
@@ -3773,7 +4553,7 @@ public class MainActivity extends Activity {
                         snack(L.t("Страница сохранена: ") + s.name, L.t("Загрузки"), this::showDownloads);
                     } catch (Exception e) { toast(L.t("Не удалось сохранить страницу: ") + e.getMessage()); }
                     finally { tmp.delete(); }
-                }).start());
+                }));
             });
         } catch (Exception e) { toast(L.t("Не удалось сохранить страницу")); }
     }
@@ -3785,42 +4565,42 @@ public class MainActivity extends Activity {
         final String host = page ? t.pageHost : null;
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(8));
+        box.setPaddingRelative(0, 0, 0, dp(8));
         final Dialog[] d = new Dialog[1];
         final Runnable[] fill = new Runnable[1];
         fill[0] = () -> {
             box.removeAllViews();
             boolean on = AdBlocker.enabled;
-            boolean wl = host != null && AdBlocker.whitelist.contains(host);
+            boolean wl = host != null && AdBlocker.siteAllowed(host);
             boolean active = on && !wl;
             // header
             LinearLayout head = new LinearLayout(this);
             head.setGravity(Gravity.CENTER_VERTICAL);
-            head.setPadding(dp(22), dp(2), dp(22), dp(10));
+            head.setPaddingRelative(dp(22), dp(2), dp(22), dp(10));
             FrameLayout badge = new FrameLayout(this);
             int good = Ui.dark ? 0xFF81C995 : 0xFF188038;
-            badge.setBackground(Ui.round(active ? (Ui.dark ? 0xFF1E3A2B : 0xFFE6F4EA) : (Ui.dark ? 0xFF3C4043 : 0xFFF1F3F4), 16));
+            badge.setBackground(Ui.round(active ? (Ui.dark ? 0xFF1E3A2B : 0xFFE6F4EA) : (Ui.CHIP), 16));
             ImageView bi = Ui.icon(this, R.drawable.ic_shield, active ? good : Ui.TEXT2);
             bi.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            bi.setPadding(dp(12), dp(12), dp(12), dp(12));
+            bi.setPaddingRelative(dp(12), dp(12), dp(12), dp(12));
             badge.addView(bi, new FrameLayout.LayoutParams(MATCH, MATCH));
             head.addView(badge, new LinearLayout.LayoutParams(dp(52), dp(52)));
             LinearLayout tx = new LinearLayout(this);
             tx.setOrientation(LinearLayout.VERTICAL);
-            tx.setPadding(dp(14), 0, 0, 0);
+            tx.setPaddingRelative(dp(14), 0, 0, 0);
             tx.addView(Ui.medium(Ui.text(this, L.t("Блокировщик рекламы"), 18, Ui.TEXT)));
             tx.addView(Ui.single(this, !on ? L.t("Выключен") : wl ? L.t("Отключён на ") + host : host != null ? L.t("Защищает ") + host : L.t("Включён"), 13, active ? good : Ui.TEXT2));
             head.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
             box.addView(head);
             // counters
             LinearLayout stats = new LinearLayout(this);
-            stats.setPadding(dp(16), 0, dp(16), dp(6));
+            stats.setPaddingRelative(dp(16), 0, dp(16), dp(6));
             String[][] st = {{page ? String.valueOf(t.blocked.get()) : "—", L.t("на этой странице")}, {String.valueOf(AdBlocker.totalBlocked.get()), L.t("заблокировано всего")}};
             for (String[] s : st) {
                 LinearLayout c = new LinearLayout(this);
                 c.setOrientation(LinearLayout.VERTICAL);
-                c.setPadding(dp(16), dp(12), dp(16), dp(12));
-                c.setBackground(Ui.round(Ui.dark ? 0xFF303134 : 0xFFF1F3F4, 16));
+                c.setPaddingRelative(dp(16), dp(12), dp(16), dp(12));
+                c.setBackground(Ui.round(Ui.CHIP2, 16));
                 c.addView(Ui.medium(Ui.text(this, s[0], 22, Ui.TEXT)));
                 c.addView(Ui.single(this, s[1], 12, Ui.TEXT2));
                 LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(0, WRAP, 1);
@@ -3839,10 +4619,10 @@ public class MainActivity extends Activity {
             final TextView[] ls = new TextView[1];
             ls[0] = actionRow(box, L.t("Обновить фильтры"), AdBlocker.stats(), () -> {
                 ls[0].setText(L.t("Загрузка…"));
-                new Thread(() -> {
+                BG.execute(() -> {
                     try { AdBlocker.update(getApplicationContext()); ui.post(() -> { ls[0].setText(L.t("Обновлено · ") + AdBlocker.stats()); snack(L.t("Фильтры обновлены"), null, null); }); }
                     catch (Exception e) { ui.post(() -> ls[0].setText(L.t("Ошибка: ") + e.getMessage())); }
-                }).start();
+                });
             });
             java.util.Set<String> wls = AdBlocker.whitelist;
             if (!wls.isEmpty()) {
@@ -3850,10 +4630,10 @@ public class MainActivity extends Activity {
                 for (String h : new java.util.TreeSet<>(wls)) {
                     LinearLayout r = new LinearLayout(this);
                     r.setGravity(Gravity.CENTER_VERTICAL);
-                    r.setPadding(dp(20), dp(6), dp(8), dp(6));
+                    r.setPaddingRelative(dp(20), dp(6), dp(8), dp(6));
                     r.addView(tileIcon(h, "https://" + h, false, 0, 30), new LinearLayout.LayoutParams(dp(30), dp(30)));
                     TextView ht = Ui.single(this, h, 15, Ui.TEXT);
-                    ht.setPadding(dp(14), 0, 0, 0);
+                    ht.setPaddingRelative(dp(14), 0, 0, 0);
                     r.addView(ht, new LinearLayout.LayoutParams(0, WRAP, 1));
                     ImageView del = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
                     del.setOnClickListener(v -> { store.setWhitelisted(h, false); AdBlocker.whitelist = store.whitelist(); fill[0].run(); if (h.equals(host)) t.web.reload(); });
@@ -3862,7 +4642,7 @@ public class MainActivity extends Activity {
                 }
             }
             TextView hint = Ui.text(this, L.t("Списки: EasyList, RuAdList, AdGuard Russian и базы рекламных доменов. Видеореклама YouTube пропускается автоматически."), 12, Ui.TEXT2);
-            hint.setPadding(dp(22), dp(10), dp(22), 0);
+            hint.setPaddingRelative(dp(22), dp(10), dp(22), 0);
             box.addView(hint);
         };
         fill[0].run();
@@ -3881,8 +4661,8 @@ public class MainActivity extends Activity {
     void silence(Tab t) {
         if (t == null || t.web == null) return;
         if (customView != null) hideCustomView();
-        try { t.web.evaluateJavascript(PAUSE_JS + "(function(){try{var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{f[i].contentWindow.postMessage('{\\\"event\\\":\\\"command\\\",\\\"func\\\":\\\"pauseVideo\\\",\\\"args\\\":\\\"\\\"}','*')}catch(e){}}}catch(e){}})();", null); } catch (Exception ignored) { }
-        try { t.web.onPause(); t.silenced = true; } catch (Exception ignored) { }
+        try { t.web.evaluateJavascript(PAUSE_JS + "(function(){try{var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{f[i].contentWindow.postMessage('{\\\"event\\\":\\\"command\\\",\\\"func\\\":\\\"pauseVideo\\\",\\\"args\\\":\\\"\\\"}','*')}catch(e){}}}catch(e){}})();", null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        try { t.web.onPause(); t.silenced = true; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         if (t.video != null) updateVideoFab();
     }
 
@@ -3910,18 +4690,18 @@ public class MainActivity extends Activity {
             Matcher m = Pattern.compile("filename\\*\\s*=\\s*([^']*)'[^']*'([^;]+)", Pattern.CASE_INSENSITIVE).matcher(cd);
             if (m.find()) {
                 try { n = java.net.URLDecoder.decode(m.group(2).trim().replace("+", "%2B"), m.group(1).trim().isEmpty() ? "UTF-8" : m.group(1).trim()); }
-                catch (Exception ignored) { }
+                catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             }
             if (n == null || n.isEmpty()) {
                 m = Pattern.compile("filename\\s*=\\s*(\"([^\"]*)\"|([^;]+))", Pattern.CASE_INSENSITIVE).matcher(cd);
                 if (m.find()) {
                     n = (m.group(2) != null ? m.group(2) : m.group(3)).trim();
-                    try { if (n.contains("%")) n = java.net.URLDecoder.decode(n.replace("+", "%2B"), "UTF-8"); } catch (Exception ignored) { }
+                    try { if (n.contains("%")) n = java.net.URLDecoder.decode(n.replace("+", "%2B"), "UTF-8"); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                 }
             }
         }
         Uri u = null;
-        try { u = Uri.parse(url); } catch (Exception ignored) { }
+        try { u = Uri.parse(url); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         if ((n == null || n.isEmpty()) && u != null && u.getLastPathSegment() != null && !extOf(u.getLastPathSegment()).isEmpty()) n = u.getLastPathSegment();
         if ((n == null || n.isEmpty()) && u != null && u.isHierarchical()) {
             for (String k : new String[]{"filename", "file", "name", "fn", "title", "response-content-disposition"}) {
@@ -3930,7 +4710,7 @@ public class MainActivity extends Activity {
                     if (v == null) continue;
                     if (k.startsWith("response")) { String g = fileName("", v, null); if (!extOf(g).isEmpty()) { n = g; break; } continue; }
                     if (!extOf(v).isEmpty()) { n = v; break; }
-                } catch (Exception ignored) { }
+                } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
             }
         }
         if (n == null || n.isEmpty()) n = URLUtil.guessFileName(url, null, genericMime(mime) ? null : mime);
@@ -3974,14 +4754,14 @@ public class MainActivity extends Activity {
         }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(22), dp(4), dp(22), dp(8));
+        box.setPaddingRelative(dp(22), dp(4), dp(22), dp(8));
         box.addView(sheetHead(R.drawable.ic_add, L.t("Открыть новую вкладку?"),
                 (oh != null ? oh : L.t("Сайт")) + L.t(" хочет открыть ") + (target != null ? hostOf(target) : L.t("новую вкладку"))));
         if (target != null) {
             TextView ut = Ui.text(this, target, 12, Ui.TEXT2);
             ut.setMaxLines(2);
             ut.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            ut.setPadding(0, dp(10), 0, 0);
+            ut.setPaddingRelative(0, dp(10), 0, 0);
             box.addView(ut);
         }
         android.widget.CheckBox always = new android.widget.CheckBox(this);
@@ -4022,7 +4802,7 @@ public class MainActivity extends Activity {
     void discardHeld(Tab nt) {
         if (!nt.held) return;
         nt.held = false;
-        try { nt.web.stopLoading(); nt.web.destroy(); } catch (Exception ignored) { }
+        try { nt.web.stopLoading(); nt.web.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     // ---------------------------------------------------------------- shared sheet pieces
@@ -4033,12 +4813,12 @@ public class MainActivity extends Activity {
         badge.setBackground(Ui.round(Ui.TONAL, 14));
         ImageView bi = Ui.icon(this, icon, Ui.ON_TONAL);
         bi.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        bi.setPadding(dp(12), dp(12), dp(12), dp(12));
+        bi.setPaddingRelative(dp(12), dp(12), dp(12), dp(12));
         badge.addView(bi, new FrameLayout.LayoutParams(MATCH, MATCH));
         head.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(14), 0, 0, 0);
+        tx.setPaddingRelative(dp(14), 0, 0, 0);
         tx.addView(Ui.medium(Ui.text(this, title, 18, Ui.TEXT)));
         TextView st = Ui.text(this, sub, 13, Ui.TEXT2);
         st.setMaxLines(2);
@@ -4050,17 +4830,17 @@ public class MainActivity extends Activity {
     TextView[] sheetButtons(LinearLayout box, String no, String yes) {
         LinearLayout btns = new LinearLayout(this);
         btns.setGravity(Gravity.CENTER_VERTICAL);
-        btns.setPadding(0, dp(16), 0, 0);
+        btns.setPaddingRelative(0, dp(16), 0, 0);
         TextView n = Ui.medium(Ui.text(this, no, 15, Ui.ACCENT));
         n.setGravity(Gravity.CENTER);
-        n.setPadding(dp(16), 0, dp(16), 0);
+        n.setPaddingRelative(dp(16), 0, dp(16), 0);
         n.setBackground(Ui.stroke(Color.TRANSPARENT, Ui.dark ? 0xFF5F6368 : 0xFFDADCE0, 1, 24));
         TextView y = Ui.medium(Ui.text(this, yes, 15, Ui.dark ? 0xFF202124 : Color.WHITE));
         y.setGravity(Gravity.CENTER);
         y.setBackground(Ui.round(Ui.ACCENT, 24));
         y.setForeground(Ui.ripple(this, false));
         LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(0, dp(48), 1);
-        nl.rightMargin = dp(10);
+        nl.setMarginEnd(dp(10));
         btns.addView(n, nl);
         btns.addView(y, new LinearLayout.LayoutParams(0, dp(48), 1));
         box.addView(btns);
@@ -4102,7 +4882,7 @@ public class MainActivity extends Activity {
                 ArrayList<String> denied = new ArrayList<>();
                 for (String k : allowed) if (hasAndroid(k)) ok.add(k); else denied.add(k);
                 if (!denied.isEmpty()) snack(L.t("Нет доступа: ") + kindTitle(denied.get(0)).toLowerCase(Locale.ROOT) + L.t(". Разрешите его Lasur в настройках Android"), L.t("Настройки"), () -> {
-                    try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { }
+                    try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
                 });
                 result.accept(ok);
             };
@@ -4114,10 +4894,10 @@ public class MainActivity extends Activity {
         for (int i = 0; i < ask.size(); i++) what.append(i == 0 ? "" : i == ask.size() - 1 ? L.t(" и ") : ", ").append(kindLabel(ask.get(i)));
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(22), dp(4), dp(22), dp(8));
+        box.setPaddingRelative(dp(22), dp(4), dp(22), dp(8));
         box.addView(sheetHead(kindIcon(ask.get(0)), host == null ? L.t("Сайт") : host, L.t("запрашивает доступ: ") + what));
         TextView hint = Ui.text(this, t.incognito ? L.t("В режиме инкогнито решение действует до закрытия вкладки.") : L.t("Решение запомнится для этого сайта. Изменить его можно в Настройках → Разрешения сайтов."), 12, Ui.TEXT2);
-        hint.setPadding(0, dp(10), 0, 0);
+        hint.setPaddingRelative(0, dp(10), 0, 0);
         box.addView(hint);
         final boolean[] answered = {false};
         TextView[] b = sheetButtons(box, L.t("Блокировать"), L.t("Разрешить"));
@@ -4162,7 +4942,7 @@ public class MainActivity extends Activity {
             if (ok.contains("mic")) g.add(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE);
             if (ok.contains("cam")) g.add(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE);
             if (wantDrm) g.add(android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID);
-            try { if (g.isEmpty()) r.deny(); else r.grant(g.toArray(new String[0])); } catch (Exception ignored) { }
+            try { if (g.isEmpty()) r.deny(); else r.grant(g.toArray(new String[0])); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         });
     }
 
@@ -4176,7 +4956,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(24));
+        box.setPaddingRelative(0, 0, 0, dp(24));
         sv.addView(box);
         final Runnable[] fill = new Runnable[1];
         fill[0] = () -> {
@@ -4194,7 +4974,7 @@ public class MainActivity extends Activity {
             java.util.Set<String> pa = store.p.getStringSet("popupAllow", new HashSet<>());
             if (by.isEmpty() && pa.isEmpty()) {
                 TextView e = Ui.text(this, L.t("Здесь появятся сайты, которым вы разрешили или запретили доступ к микрофону, камере и местоположению."), 14, Ui.TEXT2);
-                e.setPadding(dp(20), dp(24), dp(20), 0);
+                e.setPaddingRelative(dp(20), dp(24), dp(20), 0);
                 box.addView(e);
             }
             for (java.util.Map.Entry<String, ArrayList<String[]>> e : by.entrySet()) {
@@ -4203,17 +4983,17 @@ public class MainActivity extends Activity {
                 final String host = e.getKey();
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(10), dp(8), dp(10));
+                r.setPaddingRelative(dp(16), dp(10), dp(8), dp(10));
                 r.addView(tileIcon(host, "https://" + host, false, 0, 36), new LinearLayout.LayoutParams(dp(36), dp(36)));
                 LinearLayout tx = new LinearLayout(this);
                 tx.setOrientation(LinearLayout.VERTICAL);
-                tx.setPadding(dp(16), 0, dp(8), 0);
+                tx.setPaddingRelative(dp(16), 0, dp(8), 0);
                 tx.addView(Ui.single(this, host, 15, Ui.TEXT));
                 TextView st = Ui.text(this, sb.toString(), 13, Ui.TEXT2);
                 tx.addView(st);
                 r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
                 TextView reset = Ui.medium(Ui.text(this, L.t("Сбросить"), 14, Ui.ACCENT));
-                reset.setPadding(dp(12), dp(10), dp(12), dp(10));
+                reset.setPaddingRelative(dp(12), dp(10), dp(12), dp(10));
                 reset.setBackground(Ui.ripple(this, true));
                 reset.setOnClickListener(v -> { android.content.SharedPreferences.Editor ed = store.p.edit(); for (String[] k : e.getValue()) ed.remove(k[2]); ed.apply(); fill[0].run(); });
                 r.addView(reset);
@@ -4224,7 +5004,7 @@ public class MainActivity extends Activity {
                 for (String h : new java.util.TreeSet<>(pa)) {
                     LinearLayout r = new LinearLayout(this);
                     r.setGravity(Gravity.CENTER_VERTICAL);
-                    r.setPadding(dp(20), dp(6), dp(8), dp(6));
+                    r.setPaddingRelative(dp(20), dp(6), dp(8), dp(6));
                     TextView ht = Ui.single(this, h, 15, Ui.TEXT);
                     r.addView(ht, new LinearLayout.LayoutParams(0, WRAP, 1));
                     ImageView del = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
@@ -4268,7 +5048,7 @@ public class MainActivity extends Activity {
         c.addView(name, nl);
         c.setClipChildren(false);
         c.setClipToPadding(false);
-        c.setPadding(0, dp(24), 0, dp(24));
+        c.setPaddingRelative(0, dp(24), 0, dp(24));
         splash.setClipChildren(false);
         splash.addView(c, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER));
         root.addView(splash, new FrameLayout.LayoutParams(MATCH, MATCH));
@@ -4323,7 +5103,7 @@ public class MainActivity extends Activity {
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(side - dp(12), dp(8), side - dp(12), 0);
+        top.setPaddingRelative(side - dp(12), dp(8), side - dp(12), 0);
         if (wStep > 0) {
             ImageView back = Ui.iconBtn(this, R.drawable.ic_back, Ui.TEXT2);
             back.setOnClickListener(v -> { wStep--; buildWelcome(); });
@@ -4332,7 +5112,7 @@ public class MainActivity extends Activity {
         top.addView(new View(this), new LinearLayout.LayoutParams(0, dp(48), 1));
         if (wStep < 3) {
             TextView skip = Ui.medium(Ui.text(this, L.t("Пропустить"), 15, Ui.TEXT2));
-            skip.setPadding(dp(12), dp(12), dp(12), dp(12));
+            skip.setPaddingRelative(dp(12), dp(12), dp(12), dp(12));
             skip.setBackground(Ui.ripple(this, true));
             skip.setOnClickListener(v -> finishWelcome());
             top.addView(skip);
@@ -4344,7 +5124,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.setPadding(side, dp(8), side, dp(16));
+        box.setPaddingRelative(side, dp(8), side, dp(16));
         sv.addView(box, new FrameLayout.LayoutParams(MATCH, WRAP));
         col.addView(sv, new LinearLayout.LayoutParams(MATCH, 0, 1));
 
@@ -4363,11 +5143,11 @@ public class MainActivity extends Activity {
             for (int i = 0; i < f.length; i++) box.addView(featureRow(ic[i], L.t(f[i][0]), L.t(f[i][1])), new LinearLayout.LayoutParams(MATCH, WRAP));
             LinearLayout lr = new LinearLayout(this);
             lr.setGravity(Gravity.CENTER_VERTICAL);
-            lr.setPadding(dp(16), dp(10), dp(18), dp(10));
+            lr.setPaddingRelative(dp(16), dp(10), dp(18), dp(10));
             lr.setBackground(Ui.stroke(Color.TRANSPARENT, Ui.dark ? 0xFF5F6368 : 0xFFDADCE0, 1, 22));
             lr.addView(Ui.icon(this, R.drawable.ic_translate, Ui.ACCENT), new LinearLayout.LayoutParams(dp(20), dp(20)));
             TextView lt = Ui.medium(Ui.text(this, langName(), 14, Ui.TEXT));
-            lt.setPadding(dp(10), 0, 0, 0);
+            lt.setPaddingRelative(dp(10), 0, 0, 0);
             lr.addView(lt);
             lr.setOnClickListener(v -> pickLanguage());
             LinearLayout.LayoutParams lrl = new LinearLayout.LayoutParams(WRAP, WRAP);
@@ -4379,12 +5159,12 @@ public class MainActivity extends Activity {
                 final int k = i;
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(14), dp(16), dp(14));
+                r.setPaddingRelative(dp(16), dp(14), dp(16), dp(14));
                 boolean sel = wEngine == i;
-                r.setBackground(sel ? Ui.stroke(Ui.TONAL, Ui.ACCENT, 2, 18) : Ui.round(Ui.dark ? 0xFF303134 : 0xFFF1F3F4, 18));
+                r.setBackground(sel ? Ui.stroke(Ui.TONAL, Ui.ACCENT, 2, 18) : Ui.round(Ui.CHIP2, 18));
                 r.addView(tileIcon(L.t(Store.ENGINES[i]), Store.ENGINE_URLS[i], false, 0, 32), new LinearLayout.LayoutParams(dp(32), dp(32)));
                 TextView tv = Ui.medium(Ui.text(this, L.t(Store.ENGINES[i]), 16, sel ? Ui.ON_TONAL : Ui.TEXT));
-                tv.setPadding(dp(14), 0, 0, 0);
+                tv.setPaddingRelative(dp(14), 0, 0, 0);
                 r.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
                 if (sel) r.addView(Ui.icon(this, R.drawable.ic_check, Ui.ACCENT), new LinearLayout.LayoutParams(dp(22), dp(22)));
                 r.setOnClickListener(v -> { wEngine = k; buildWelcome(); });
@@ -4400,15 +5180,15 @@ public class MainActivity extends Activity {
                 final int m = i;
                 LinearLayout r = new LinearLayout(this);
                 r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(dp(16), dp(13), dp(16), dp(13));
+                r.setPaddingRelative(dp(16), dp(13), dp(16), dp(13));
                 boolean sel = wMode == i;
-                r.setBackground(sel ? Ui.stroke(Ui.TONAL, Ui.ACCENT, 2, 18) : Ui.round(Ui.dark ? 0xFF303134 : 0xFFF1F3F4, 18));
+                r.setBackground(sel ? Ui.stroke(Ui.TONAL, Ui.ACCENT, 2, 18) : Ui.round(Ui.CHIP2, 18));
                 View sw2 = new View(this);
                 int[] pv = {Ui.dark ? 0xFF202124 : 0xFFFFFFFF, 0xFFFFFFFF, 0xFF202124, 0xFF000000};
                 sw2.setBackground(Ui.stroke(pv[i], Ui.dark ? 0xFF5F6368 : 0xFFBDC1C6, 1.5f, 14));
                 r.addView(sw2, new LinearLayout.LayoutParams(dp(28), dp(28)));
                 TextView tv = Ui.medium(Ui.text(this, L.t(Ui.MODE_NAMES[i]), 16, sel ? Ui.ON_TONAL : Ui.TEXT));
-                tv.setPadding(dp(14), 0, 0, 0);
+                tv.setPaddingRelative(dp(14), 0, 0, 0);
                 r.addView(tv, new LinearLayout.LayoutParams(0, WRAP, 1));
                 if (sel) r.addView(Ui.icon(this, R.drawable.ic_check, Ui.ACCENT), new LinearLayout.LayoutParams(dp(22), dp(22)));
                 r.setOnClickListener(v -> { wMode = m; buildWelcome(); });
@@ -4418,7 +5198,7 @@ public class MainActivity extends Activity {
             }
             box.addView(modes, new LinearLayout.LayoutParams(MATCH, WRAP));
             TextView al = Ui.medium(Ui.text(this, L.t("Цвет"), 14, Ui.ACCENT));
-            al.setPadding(0, dp(22), 0, dp(10));
+            al.setPaddingRelative(0, dp(22), 0, dp(10));
             box.addView(al, new LinearLayout.LayoutParams(MATCH, WRAP));
             LinearLayout acc = new LinearLayout(this);
             acc.setGravity(Gravity.CENTER);
@@ -4442,7 +5222,7 @@ public class MainActivity extends Activity {
             welcomeTitle(box, L.t("Почти готово"), L.t("Основные настройки"));
             LinearLayout sw = new LinearLayout(this);
             sw.setOrientation(LinearLayout.VERTICAL);
-            sw.setBackground(Ui.round(Ui.dark ? 0xFF303134 : 0xFFF1F3F4, 20));
+            sw.setBackground(Ui.round(Ui.CHIP2, 20));
             switchRow(sw, L.t("Блокировка рекламы"), L.t("Реклама, трекеры и баннеры"), store.adblock(), v -> { store.setBool("adblock", v); AdBlocker.enabled = v; });
             switchRow(sw, L.t("Блокировать всплывающие окна"), L.t("И рекламные переходы без нажатия"), store.blockPopups(), v -> store.setBool("popups", v));
             switchRow(sw, L.t("Предлагать сохранять пароли"), L.t("После входа на сайт"), store.bool("pwSave", true), v -> store.setBool("pwSave", v));
@@ -4459,13 +5239,13 @@ public class MainActivity extends Activity {
 
         LinearLayout bottom = new LinearLayout(this);
         bottom.setGravity(Gravity.CENTER_VERTICAL);
-        bottom.setPadding(side, dp(8), side, dp(22));
+        bottom.setPaddingRelative(side, dp(8), side, dp(22));
         LinearLayout dots = new LinearLayout(this);
         for (int i = 0; i < 4; i++) {
             View d = new View(this);
             d.setBackground(Ui.round(i == wStep ? Ui.ACCENT : (Ui.dark ? 0xFF5F6368 : 0xFFDADCE0), 4));
             LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(i == wStep ? 22 : 8), dp(8));
-            dlp.rightMargin = dp(6);
+            dlp.setMarginEnd(dp(6));
             dots.addView(d, dlp);
         }
         bottom.addView(dots, new LinearLayout.LayoutParams(0, WRAP, 1));
@@ -4482,28 +5262,28 @@ public class MainActivity extends Activity {
     void welcomeTitle(LinearLayout box, String title, String sub) {
         TextView t = Ui.medium(Ui.text(this, title, 26, Ui.TEXT));
         t.setGravity(Gravity.CENTER);
-        t.setPadding(0, dp(18), 0, dp(6));
+        t.setPaddingRelative(0, dp(18), 0, dp(6));
         box.addView(t, new LinearLayout.LayoutParams(MATCH, WRAP));
         TextView s = Ui.text(this, sub, 15, Ui.TEXT2);
         s.setGravity(Gravity.CENTER);
-        s.setPadding(0, 0, 0, dp(18));
+        s.setPaddingRelative(0, 0, 0, dp(18));
         box.addView(s, new LinearLayout.LayoutParams(MATCH, WRAP));
     }
 
     View featureRow(int icon, String title, String sub) {
         LinearLayout r = new LinearLayout(this);
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(0, dp(9), 0, dp(9));
+        r.setPaddingRelative(0, dp(9), 0, dp(9));
         FrameLayout b = new FrameLayout(this);
         b.setBackground(Ui.round(Ui.TONAL, 14));
         ImageView i = Ui.icon(this, icon, Ui.ON_TONAL);
         i.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        i.setPadding(dp(11), dp(11), dp(11), dp(11));
+        i.setPaddingRelative(dp(11), dp(11), dp(11), dp(11));
         b.addView(i, new FrameLayout.LayoutParams(MATCH, MATCH));
         r.addView(b, new LinearLayout.LayoutParams(dp(44), dp(44)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
-        tx.setPadding(dp(14), 0, 0, 0);
+        tx.setPaddingRelative(dp(14), 0, 0, 0);
         tx.addView(Ui.medium(Ui.text(this, title, 16, Ui.TEXT)));
         tx.addView(Ui.text(this, sub, 13, Ui.TEXT2));
         r.addView(tx, new LinearLayout.LayoutParams(0, WRAP, 1));
@@ -4552,7 +5332,7 @@ public class MainActivity extends Activity {
         String p = L.pref(this);
         int sel = 0;
         for (int i = 0; i < L.CODES.length; i++) if (L.CODES[i].equals(p)) sel = i;
-        new AlertDialog.Builder(this).setTitle(L.t("Язык")).setSingleChoiceItems(names, sel, (d, w) -> {
+        dialog().setTitle(L.t("Язык")).setSingleChoiceItems(names, sel, (d, w) -> {
             d.dismiss();
             if (L.CODES[w].equals(p)) return;
             store.p.edit().putString("lang", L.CODES[w]).commit();
@@ -4564,38 +5344,8 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- picture-in-picture
     boolean pipExited;
-    static final String MEDIA_JS = "(function(){if(window.__lasurMedia)return;window.__lasurMedia=1;var last='';"
-            + "function playing(){var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++)if(!vs[i].paused&&!vs[i].ended)return true;return false}"
-            + "function keep(){return window.__lasurKeep&&(window.__lasurPip||playing()||Date.now()-(window.__lasurLastPlay||0)<1500)}"
-            + "try{var D=Document.prototype,hd=Object.getOwnPropertyDescriptor(D,'hidden'),vd=Object.getOwnPropertyDescriptor(D,'visibilityState');"
-            + "Object.defineProperty(document,'hidden',{configurable:true,get:function(){return keep()?false:hd.get.call(document)}});"
-            + "Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return keep()?'visible':vd.get.call(document)}});"
-            + "try{var hf=Document.prototype.hasFocus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}"
-            + "Object.defineProperty(document,'webkitHidden',{configurable:true,get:function(){return document.hidden}});"
-            + "Object.defineProperty(document,'webkitVisibilityState',{configurable:true,get:function(){return document.visibilityState}});}catch(e){}"
-            + "['visibilitychange','webkitvisibilitychange','blur','pagehide','freeze'].forEach(function(n){window.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true);"
-            + "document.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true)});"
-            + "setInterval(function(){if(playing())window.__lasurLastPlay=Date.now()},500);"
-            + "function rep(){try{var best=null,ba=0;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];"
-            + "if(!v.paused&&!v.ended&&v.readyState>1){var r=v.getBoundingClientRect(),a=r.width*r.height;if(a>=ba){ba=a;best=v}}}"
-            + "var s=(best?1:0)+','+(best?best.videoWidth:0)+','+(best?best.videoHeight:0);if(s!=last){last=s;LumenBridge.media(best?1:0,best?best.videoWidth:0,best?best.videoHeight:0)}}catch(e){}}"
-            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){if(n=='playing')window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&!window.__lasurUserPause){var t=e.target;if(!t.ended&&t.currentTime>0)setTimeout(function(){try{if(t.paused&&window.__lasurPip&&!window.__lasurUserPause)t.play()}catch(x){}},80)}setTimeout(rep,50)},true)});setInterval(rep,1500);rep();})();";
-    static final String PIP_ON_JS = "(function(){try{window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
-            + "a=r.width*r.height+(v.paused?0:1e9);if(a>ba){ba=a;best=v}}if(!best)return;var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"
-            + "st.textContent='.__lasurPipA{transform:none!important;filter:none!important;contain:none!important;perspective:none!important;will-change:auto!important;z-index:2147483646!important}'"
-            + "+'.__lasurPipV{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;"
-            + "object-fit:contain!important;background:#000!important;z-index:2147483647!important;margin:0!important;transform:none!important;visibility:visible!important;opacity:1!important}'"
-            + "+'html.__lasurPipH,html.__lasurPipH body{overflow:hidden!important;background:#000!important}';(document.head||document.documentElement).appendChild(st)}"
-            + "best.classList.add('__lasurPipV');for(var n=best.parentElement;n&&n!=document.documentElement;n=n.parentElement)n.classList.add('__lasurPipA');"
-            + "document.documentElement.classList.add('__lasurPipH');if(best.paused&&Date.now()-(window.__lasurLastPlay||0)<5000)best.play();}catch(e){}})();";
-    static final String PIP_OFF_JS = "(function(){try{window.__lasurPip=0;var a=document.querySelectorAll('.__lasurPipA,.__lasurPipV');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurPipA','__lasurPipV');"
-            + "document.documentElement.classList.remove('__lasurPipH');var s=document.getElementById('__lasurPip');if(s)s.remove();}catch(e){}})();";
 
-    static final String PIP_FS_JS = "(function(){window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();try{var v=document.querySelectorAll('video');for(var i=0;i<v.length;i++)if(v[i].paused&&Date.now()-(window.__lasurLastPlay||0)<5000&&v[i].currentTime>0)v[i].play()}catch(e){}})();";
 
-    static final String PIP_TOGGLE_JS = "(function(){try{var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
-            + "a=r.width*r.height+(v.paused?0:1e9)+(v.currentTime>0?1e8:0);if(a>ba){ba=a;best=v}}if(!best)return;"
-            + "if(best.paused){window.__lasurUserPause=0;best.play()}else{window.__lasurUserPause=1;best.pause()}}catch(e){}})();";
     static final String ACTION_PIP_TOGGLE = "com.lumen.browser.PIP_TOGGLE";
     android.content.BroadcastReceiver pipReceiver;
 
@@ -4639,13 +5389,13 @@ public class MainActivity extends Activity {
             acts.add(new android.app.RemoteAction(android.graphics.drawable.Icon.createWithResource(this,
                     playing ? R.drawable.ic_pip_pause : R.drawable.ic_pip_play), label, label, pi));
             b.setActions(acts);
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         return b.build();
     }
 
     void updatePipParams() {
         if (Build.VERSION.SDK_INT < 26) return;
-        try { setPictureInPictureParams(pipParams()); } catch (Exception ignored) { }
+        try { setPictureInPictureParams(pipParams()); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     void preparePip() {
@@ -4682,13 +5432,31 @@ public class MainActivity extends Activity {
         super.onPictureInPictureModeChanged(in, c);
         if (in) { pipExited = false; preparePip(); }
         else { pipExited = true; restorePip(); }
+        applyInsets();
     }
 
     @Override protected void onResume() { super.onResume(); pipExited = false; }
 
     @Override protected void onStop() {
         super.onStop();
-        if (pipExited && current != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ignored) { } }
+        if (pipExited && current != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
         pipExited = false;
+        // Stop JavaScript timers / layout of all pages in background (battery), unless a video keeps
+        // playing in picture-in-picture or background playback.
+        boolean keep = (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode())
+                || (current != null && current.mediaPlaying && store.bool("pip", true));
+        if (!keep && current != null) {
+            try { current.web.onPause(); current.web.pauseTimers(); timersPaused = true; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        }
+    }
+
+    boolean timersPaused;
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (timersPaused && current != null) {
+            timersPaused = false;
+            try { current.web.resumeTimers(); if (!current.ntp) current.web.onResume(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        }
     }
 }
