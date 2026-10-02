@@ -537,7 +537,16 @@ public class MainActivity extends Activity {
             t.pendingState = null;
             boolean ok = false;
             try { android.webkit.WebBackForwardList l = t.web.restoreState(st); ok = l != null && l.getSize() > 0; } catch (Exception e) { Log.w(TAG, "restoreState", e); }
-            if (ok) t.pendingUrl = null;
+            if (ok) {
+                // some WebView versions restore the history but leave the page empty: load it then
+                final String fallback = t.pendingUrl;
+                final WebView w = t.web;
+                t.pendingUrl = null;
+                ui.postDelayed(() -> {
+                    String cu = w.getUrl();
+                    if (fallback != null && t.web == w && (cu == null || cu.equals("about:blank")) && w.getProgress() >= 100) w.loadUrl(fallback);
+                }, 1200);
+            }
         }
         if (t.pendingUrl != null) { String u = t.pendingUrl; t.pendingUrl = null; t.web.loadUrl(u); }
         trimLiveTabs();
@@ -619,8 +628,10 @@ public class MainActivity extends Activity {
 
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_RUNNING_CRITICAL || level == TRIM_MEMORY_COMPLETE) trimLiveTabs(1);
-        else if (level >= TRIM_MEMORY_RUNNING_LOW) trimLiveTabs(3);
+        // UI_HIDDEN (20) and BACKGROUND (40) only mean the app left the screen: unloading tabs there made
+        // every tab reload when the user came back.
+        if (level == TRIM_MEMORY_RUNNING_CRITICAL || level == TRIM_MEMORY_COMPLETE) trimLiveTabs(1);
+        else if (level == TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_MODERATE) trimLiveTabs(3);
     }
 
     @Override public void onLowMemory() { super.onLowMemory(); trimLiveTabs(1); }
@@ -985,13 +996,14 @@ public class MainActivity extends Activity {
     void injectScripts(Tab t, boolean force) {
         WebView v = t.web;
         String cur = v.getUrl();
-        if (!force && cur != null && cur.equals(t.injectedFor)) return;
-        t.injectedFor = cur;
+        String key = cur + "#" + (t.progress >= 100 ? 2 : t.progress >= 70 ? 1 : 0);
+        if (!force && key.equals(t.injectedFor)) return;
+        t.injectedFor = key;
         boolean ab = AdBlocker.enabled && (t.pageHost == null || !AdBlocker.siteAllowed(t.pageHost));
         if (ab) v.evaluateJavascript(COSMETIC_JS, null);
         v.evaluateJavascript(VIDEO_JS, null);
         v.evaluateJavascript(PTR_JS, null);
-        v.evaluateJavascript("window.__lasurKeep=" + store.bool("pip", true) + ";" + MEDIA_JS, null);
+        v.evaluateJavascript(Scripts.R("window.__lasurKeep=" + store.bool("pip", true) + ";") + MEDIA_JS, null);
         if (store.js() && (store.bool("pwSave", true) || store.bool("pwFill", true))) v.evaluateJavascript(PW_JS, null);
         if (ab && t.pageHost != null && t.pageHost.endsWith("youtube.com")) v.evaluateJavascript(YT_JS, null);
         if (t.desktop) v.evaluateJavascript("(function(){var m=document.querySelector('meta[name=viewport]');if(m)m.setAttribute('content','width=1100');})();", null);
@@ -1003,7 +1015,7 @@ public class MainActivity extends Activity {
 
         @Override public void onProgressChanged(WebView v, int p) {
             t.progress = p;
-            if (p >= 30 && p < 100) injectScripts(t, false);
+            if (p >= 30) injectScripts(t, false);
             if (p >= 100 && t == current && ptrSpinning) ui.postDelayed(() -> { if (ptrSpinning) hidePtr(); }, 250);
             if (t == current) {
                 progress.setProgress(p);
@@ -1256,6 +1268,7 @@ public class MainActivity extends Activity {
         updateTabCount();
         updateVideoFab();
         updateOmniButtons();
+        updatePipParams();
     }
 
     // ---------------------------------------------------------------- system bars (edge-to-edge, Android 15+ ready)
@@ -1987,6 +2000,7 @@ public class MainActivity extends Activity {
         switcher.setScaleY(0.97f);
         switcher.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170).start();
         videoFab.setVisibility(View.GONE);
+        updatePipParams();
     }
 
     void hideSwitcher() {
@@ -2070,8 +2084,10 @@ public class MainActivity extends Activity {
             ei.setScaleType(ImageView.ScaleType.FIT_CENTER);
             e.addView(ei, new LinearLayout.LayoutParams(dp(56), dp(56)));
             TextView et = Ui.text(this, inc ? L.t("Нет вкладок инкогнито") : L.t("Нет открытых вкладок"), 16, fg2);
-            et.setPaddingRelative(0, dp(16), 0, 0);
-            e.addView(et);
+            et.setPaddingRelative(dp(24), dp(16), dp(24), 0);
+            et.setGravity(Gravity.CENTER);
+            et.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            e.addView(et, new LinearLayout.LayoutParams(MATCH, WRAP));
             body.addView(e, new FrameLayout.LayoutParams(MATCH, MATCH));
         } else {
             ScrollView sv = new ScrollView(this);
@@ -2393,7 +2409,17 @@ public class MainActivity extends Activity {
                 + (page && AdBlocker.enabled ? " · " + t.blocked.get() : ""), this::showAdblock);
         menuItem(box, pw, R.drawable.ic_palette, L.t("Темы и обои"), this::showAppearance);
         menuItem(box, pw, R.drawable.ic_settings, L.t("Настройки"), this::showSettings);
-        pw.showAsDropDown(menuBtn, 0, -menuBtn.getHeight());
+        if (store.bottomBar()) {
+            // bottom address bar: open upwards, above the toolbar, and never taller than the free space
+            int[] loc = new int[2];
+            menuBtn.getLocationInWindow(loc);
+            WindowInsets wi = root.getRootWindowInsets();
+            int avail = loc[1] - dp(8) - (wi != null ? insetsOf(wi)[1] : 0);
+            sv.measure(View.MeasureSpec.makeMeasureSpec(dp(272), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int h = Math.min(sv.getMeasuredHeight(), avail);
+            pw.setHeight(h);
+            pw.showAtLocation(root, Gravity.TOP | Gravity.START, Math.max(0, loc[0] + menuBtn.getWidth() - dp(272)), loc[1] - h + dp(4));
+        } else pw.showAsDropDown(menuBtn, 0, -menuBtn.getHeight());
     }
 
     int menuFg = Ui.TEXT, menuFg2 = Ui.TEXT2;
@@ -3066,17 +3092,29 @@ public class MainActivity extends Activity {
     }
 
     @SuppressWarnings("deprecation")
-    @Override public void onBackPressed() { if (!handleBack()) moveTaskToBack(true); }
+    @Override public void onBackPressed() { if (!handleBack()) leaveApp(); }
 
     /** Android 13+ (and required for predictive back with targetSdk 36): back goes through this callback. */
     void registerBack() {
         if (Build.VERSION.SDK_INT >= 33) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                    () -> { if (!handleBack()) moveTaskToBack(true); });
+                    () -> { if (!handleBack()) leaveApp(); });
         }
     }
 
     /** @return true if "Back" was handled inside the browser. */
+    /** Back on the last page: the app goes away completely, without sliding into picture-in-picture. */
+    void leaveApp() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            try { setPictureInPictureParams(new PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()); } catch (Exception ex) { android.util.Log.d("Lasur", "pip", ex); }
+        }
+        leavingByBack = true;
+        if (current != null && current.web != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } current.mediaPlaying = false; }
+        moveTaskToBack(true);
+    }
+
+    boolean leavingByBack;
+
     boolean handleBack() {
         if (customView != null) { hideCustomView(); return true; }
         if (switcher.getVisibility() == View.VISIBLE) { hideSwitcher(); return true; }
@@ -4662,6 +4700,8 @@ public class MainActivity extends Activity {
         if (t == null || t.web == null) return;
         if (customView != null) hideCustomView();
         try { t.web.evaluateJavascript(PAUSE_JS + "(function(){try{var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{f[i].contentWindow.postMessage('{\\\"event\\\":\\\"command\\\",\\\"func\\\":\\\"pauseVideo\\\",\\\"args\\\":\\\"\\\"}','*')}catch(e){}}}catch(e){}})();", null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        t.mediaPlaying = false;
+        if (t == current) updatePipParams();
         try { t.web.onPause(); t.silenced = true; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         if (t.video != null) updateVideoFab();
     }
@@ -5422,6 +5462,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onUserLeaveHint() {
         super.onUserLeaveHint();
+        if (leavingByBack) return;
         if (Build.VERSION.SDK_INT >= 26 && pipEligible() && !isInPictureInPictureMode()) {
             preparePip();
             try { if (!enterPictureInPictureMode(pipParams())) restorePip(); } catch (Exception e) { restorePip(); }
@@ -5435,7 +5476,7 @@ public class MainActivity extends Activity {
         applyInsets();
     }
 
-    @Override protected void onResume() { super.onResume(); pipExited = false; }
+    @Override protected void onResume() { super.onResume(); pipExited = false; leavingByBack = false; updatePipParams(); }
 
     @Override protected void onStop() {
         super.onStop();

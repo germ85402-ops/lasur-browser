@@ -42,6 +42,7 @@ final class AdBlocker {
         int types;          // allowed request types, 0 = all
         boolean important;  // $important: wins over exception rules
         java.util.regex.Pattern re; // /regex/ rules
+        String lit;         // literal every matching URL must contain (cheap pre-check), or null
 
         /** Identity used by $badfilter. */
         String key() {
@@ -63,7 +64,7 @@ final class AdBlocker {
         int netRules, cssRules;
     }
 
-    private static volatile Engine eng = new Engine();
+    static volatile Engine eng = new Engine();
     static volatile Set<String> whitelist = new HashSet<>();
     static volatile boolean enabled = true;
     static final AtomicLong totalBlocked = new AtomicLong();
@@ -310,6 +311,7 @@ final class AdBlocker {
             if (any.size() >= 4000) return;
             try { rule.re = java.util.regex.Pattern.compile(p.substring(1, p.length() - 1), java.util.regex.Pattern.CASE_INSENSITIVE); }
             catch (Exception ex) { return; }
+            rule.lit = regexLiteral(p.substring(1, p.length() - 1));
             any.add(rule);
             e.netRules++;
             return;
@@ -335,6 +337,7 @@ final class AdBlocker {
         while (p.endsWith("*") && !rule.endAnchor) p = p.substring(0, p.length() - 1);
         if (p.length() < 3) return;
         rule.pat = p;
+        rule.lit = patLiteral(p);
         String tok = bestToken(p, rule.hostAnchor || rule.startAnchor, rule.endAnchor);
         HashMap<String, ArrayList<Rule>> map = allow ? e.allow : e.block;
         if (tok == null) {
@@ -405,7 +408,65 @@ final class AdBlocker {
         return !end || i == un;
     }
 
+    /** Longest piece of a filter pattern without wildcards / separators. */
+    static String patLiteral(String p) {
+        String best = null;
+        for (String part : p.split("[*^|]")) if (part.length() >= 3 && (best == null || part.length() > best.length())) best = part;
+        return best;
+    }
+
+    /** Longest literal run a regex certainly requires at top level (null if unsure, e.g. with alternation). */
+    static String regexLiteral(String re) {
+        int depth0 = 0;
+        boolean inClass = false;
+        for (int k = 0; k < re.length(); k++) {
+            char x = re.charAt(k);
+            if (x == '\\') { k++; continue; }
+            if (inClass) { if (x == ']') inClass = false; continue; }
+            if (x == '[') inClass = true;
+            else if (x == '(') depth0++;
+            else if (x == ')') depth0--;
+            else if (x == '|' && depth0 <= 0) return null; // top-level alternation
+        }
+        String best = null;
+        StringBuilder run = new StringBuilder();
+        int n = re.length(), i = 0;
+        while (i <= n) {
+            char lit = 0;
+            int next;
+            if (i == n) next = n + 1;
+            else {
+                char c = re.charAt(i);
+                if (c == '\\' && i + 1 < n) { char d = re.charAt(i + 1); if (!Character.isLetterOrDigit(d)) lit = d; next = i + 2; }
+                else if (c == '[') { int j = re.indexOf(']', i + 2); next = j < 0 ? n + 1 : j + 1; }
+                else if (c == '{') { int j = re.indexOf('}', i + 1); next = j < 0 ? n + 1 : j + 1; }
+                else if (c == '(') {
+                    int depth = 0, j = i;
+                    for (; j < n; j++) {
+                        char x = re.charAt(j);
+                        if (x == '\\') { j++; continue; }
+                        if (x == '(') depth++; else if (x == ')' && --depth == 0) break;
+                    }
+                    next = j + 1;
+                }
+                else if (".*+?^$)]}".indexOf(c) >= 0) next = i + 1;
+                else { lit = c; next = i + 1; }
+            }
+            char q = next < n ? re.charAt(next) : 0;
+            boolean optional = q == '?' || q == '*' || q == '{';
+            if (lit != 0 && !optional) {
+                run.append(Character.toLowerCase(lit));
+                if (q != '+') { i = next; continue; }
+            }
+            if (run.length() >= 3 && (best == null || run.length() > best.length())) best = run.toString();
+            run.setLength(0);
+            i = next;
+        }
+        return best;
+    }
+
     static boolean match(Rule r, String u, int hostStart, int hostEnd) {
+        if (r.lit != null && u.indexOf(r.lit) < 0) return false;
         if (r.re != null) return r.re.matcher(u).find();
         if (r.hostAnchor) {
             for (int i = hostStart; i < hostEnd; i++) {

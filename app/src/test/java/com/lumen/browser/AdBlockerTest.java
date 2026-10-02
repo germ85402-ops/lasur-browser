@@ -63,4 +63,12 @@ public class AdBlockerTest {
         assertFalse(AdBlocker.shouldBlock("https://ads.net/a.js", "ads.net", "www.site.com", AdBlocker.T_SCRIPT));
         assertTrue(AdBlocker.shouldBlock("https://ads.net/a.js", "ads.net", "other.com", AdBlocker.T_SCRIPT));
     }
+
+    @Test public void regexLiteral() {
+        org.junit.Assert.assertEquals(".com/ads/", AdBlocker.regexLiteral("^https?:\\/\\/[a-z]+\\.com\\/ads\\/"));
+        org.junit.Assert.assertEquals("banner", AdBlocker.regexLiteral("(foo)?banner\\d{2,3}x"));
+        org.junit.Assert.assertNull(AdBlocker.regexLiteral("abc|def"));
+        org.junit.Assert.assertEquals("track", AdBlocker.regexLiteral("trackx?y"));
+        org.junit.Assert.assertEquals("ad.js", AdBlocker.patLiteral("||cdn.*^ad.js"));
+    }
 }
