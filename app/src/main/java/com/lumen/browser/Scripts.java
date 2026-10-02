@@ -128,31 +128,35 @@ final class Scripts {
             + "var u0=uf(pf)||(a&&a!=pf&&txt(a)?a:null);if(u0&&u&&!(auto&&u0.value))set(u0,u);set(pf,p);return}"
             + "if(!auto&&a&&txt(a)&&u)set(a,u)}catch(x){}})");
 
-    // Shared selection logic: control only the video shown in PiP, never every video on the page.
-    private static final String PIP_SELECT = "function selected(){var old=window.__lasurPipVideo;if(window.__lasurPip&&old&&old.isConnected&&!old.ended)return old;"
-            + "var best=null,score=-1,vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];if(v.ended)continue;var r=v.getBoundingClientRect();"
-            + "var a=r.width*r.height+(!v.paused?1e9:0)+(v.currentTime>0?1e8:0);if(a>score){score=a;best=v}}return best}"
-            + "function play(v){try{var p=v.play();if(p&&p.catch)p.catch(function(){})}catch(e){}}"
-            + "function begin(){if(!window.__lasurPip){window.__lasurPipAt=Date.now();window.__lasurUserPause=0;window.__lasurResN=0;}"
-            + "window.__lasurPip=1;var v=selected();window.__lasurPipVideo=v;return v}";
-
-    static final String MEDIA_JS = R("(function(){if(window.__lasurMedia)return;window.__lasurMedia=1;var last='';" + PIP_SELECT
-            + "function playing(){var v=selected();return !!(v&&!v.paused&&!v.ended)}"
-            + "function keep(){return window.__lasurKeep&&(window.__lasurPip||playing()&&Date.now()-(window.__lasurLastPlay||0)<1500)}"
-            + "try{var D=Document.prototype,hd=Object.getOwnPropertyDescriptor(D,'hidden'),vd=Object.getOwnPropertyDescriptor(D,'visibilityState');"
-            + "Object.defineProperty(document,'hidden',{configurable:true,get:function(){return keep()?false:hd.get.call(document)}});"
-            + "Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return keep()?'visible':vd.get.call(document)}});"
-            + "var hf=Document.prototype.hasFocus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}"
-            + "['visibilitychange','webkitvisibilitychange','blur','pagehide','freeze'].forEach(function(n){window.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true);"
-            + "document.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true)});"
-            + "function rep(){try{var v=selected(),on=v&&!v.paused&&!v.ended&&v.readyState>1;"
-            + "var s=(on?1:0)+','+(v?v.videoWidth:0)+','+(v?v.videoHeight:0);if(s!=last){last=s;LumenBridge.media(on?1:0,v?v.videoWidth:0,v?v.videoHeight:0)}}catch(e){}}"
-            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){"
-            + "if(n=='playing')window.__lasurLastPlay=Date.now();"
-            + "if(n=='pause'&&window.__lasurPip&&!window.__lasurUserPause&&e.target===window.__lasurPipVideo&&Date.now()-window.__lasurPipAt<1500){"
-            + "var t=e.target;if(!t.ended&&t.currentTime>0&&(window.__lasurResN=(window.__lasurResN||0)+1)<=2)setTimeout(function(){"
-            + "if(t.paused&&window.__lasurPip&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500)play(t)},80)}setTimeout(rep,50)},true)});"
-            + "setInterval(rep,1000);rep();})();");
+    // Ignore feed previews and keep the selected player stable during PiP transitions.
+    private static final String PIP_SELECT = "function eligible(v){if(!v||v.ended||!v.isConnected)return false;var yt=/(^|\\.)youtube\\.com$/.test(location.hostname);if(yt){if(!(/^\\/watch$"
+            + "/.test(location.pathname)&&new URLSearchParams(location.search).has('v')||/^\\/shorts\\/[^/]+/.test(location.pathname)||/^\\/embed\\/[^/]+/.test"
+            + "(location.pathname)))return false;if(v.closest('ytd-video-preview,ytd-inline-preview,ytd-thumbnail,ytm-video-with-context-renderer,ytm-rich-"
+            + "item-renderer'))return false;}else if(v.muted&&!v.controls&&!document.fullscreenElement)return false;var r=v.getBoundingClientRect(),c=getCo"
+            + "mputedStyle(v);return r.width>1&&r.height>1&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth&&c.display!='none'&&c.visibility!='"
+            + "hidden';}function selected(){var old=window.__lasurPipVideo;if(window.__lasurPip&&old&&old.isConnected&&!old.ended)return old;var best=null,"
+            + "score=-1,vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];if(!eligible(v))continue;var r=v.getBoundingClientRe"
+            + "ct();var a=r.width*r.height+(!v.paused?1e9:0)+(v.currentTime>0?1e8:0);if(a>score){score=a;best=v}}return best;}function play(v){try{var p=v."
+            + "play();if(p&&p.catch)p.catch(function(){})}catch(e){}}function begin(){var v=selected();if(!v)return null;if(!window.__lasurPip){window.__la"
+            + "surPipAt=Date.now();window.__lasurUserPause=0;window.__lasurResN=0;window.__lasurWasPlaying=!v.paused||Date.now()-(window.__lasurLastPlay||0"
+            + ")<2000;}window.__lasurPip=1;window.__lasurPipVideo=v;return v;}function recover(v){if(v&&v.paused&&window.__lasurPip&&window.__lasurWasPlayi"
+            + "ng&&!window.__lasurUserPause&&!v.ended&&Date.now()-window.__lasurPipAt<5000&&(window.__lasurResN||0)<4){window.__lasurResN=(window.__lasurRe"
+            + "sN||0)+1;play(v);}}";
+    static final String MEDIA_JS = R("(function(){if(window.__lasurMedia)return;window.__lasurMedia=1;var last='';"
+            + PIP_SELECT + "function playing(){var v=selected();return !!(v&&!v.paused&&!v.ended);}function keep(){return window.__lasurKeep&&(window.__lasurPip||playin"
+            + "g());}try{var D=Document.prototype,hd=Object.getOwnPropertyDescriptor(D,'hidden'),vd=Object.getOwnPropertyDescriptor(D,'visibilityState');Ob"
+            + "ject.defineProperty(document,'hidden',{configurable:true,get:function(){return keep()?false:hd.get.call(document)}});Object.defineProperty(d"
+            + "ocument,'visibilityState',{configurable:true,get:function(){return keep()?'visible':vd.get.call(document)}});var hf=Document.prototype.hasFo"
+            + "cus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}['visibilitychange','webkitvisibilitychange','blur','pagehi"
+            + "de','freeze'].forEach(function(n){window.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true);document.addEventListe"
+            + "ner(n,function(e){if(keep())e.stopImmediatePropagation()},true)});function rep(){try{var v=selected(),on=!!(v&&!v.paused&&!v.ended&&v.readyS"
+            + "tate>1),ok=!!(v&&eligible(v));if(on)window.__lasurLastPlay=Date.now();var s=(on?1:0)+','+(v?v.videoWidth:0)+','+(v?v.videoHeight:0)+','+(ok?"
+            + "1:0)+','+location.href;if(s!=last){last=s;LumenBridge.media(on?1:0,v?v.videoWidth:0,v?v.videoHeight:0,ok?1:0)}}catch(e){}}['play','playing',"
+            + "'pause','ended','emptied','loadedmetadata','volumechange'].forEach(function(n){document.addEventListener(n,function(e){if(n=='playing'&&elig"
+            + "ible(e.target))window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&e.target===window.__lasurPipVideo)setTimeout(function(){r"
+            + "ecover(e.target);rep()},120);rep()},true)});['pointerdown','keydown'].forEach(function(n){document.addEventListener(n,function(e){if(e.isTru"
+            + "sted&&window.__lasurPip)window.__lasurUserPause=1},true)});['yt-navigate-finish','popstate','fullscreenchange','scroll','resize'].forEach(fu"
+            + "nction(n){window.addEventListener(n,rep,true)});setInterval(rep,250);rep();})();");
 
     static final String PIP_ON_JS = R("(function(){try{" + PIP_SELECT + "var best=begin();if(!best)return;"
             + "var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"
@@ -161,7 +165,7 @@ final class Scripts {
             + "+'html.__lasurPipH,html.__lasurPipH body{overflow:hidden!important;background:#000!important}';(document.head||document.documentElement).appendChild(st)}"
             + "best.classList.add('__lasurPipV');for(var n=best.parentElement;n&&n!=document.documentElement;n=n.parentElement)n.classList.add('__lasurPipA');"
             + "document.documentElement.classList.add('__lasurPipH');"
-            + "if(best.paused&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500&&Date.now()-(window.__lasurLastPlay||0)<1500)play(best);"
+            + "recover(best);"
             + "}catch(e){}})();");
 
     static final String PIP_OFF_JS = R("(function(){try{window.__lasurPip=0;window.__lasurUserPause=1;window.__lasurPipVideo=null;"
@@ -169,11 +173,11 @@ final class Scripts {
             + "document.documentElement.classList.remove('__lasurPipH');var s=document.getElementById('__lasurPip');if(s)s.remove();}catch(e){}})();");
 
     static final String PIP_FS_JS = R("(function(){try{" + PIP_SELECT + "var v=begin();"
-            + "if(v&&v.paused&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500&&Date.now()-(window.__lasurLastPlay||0)<1500)play(v);"
+            + "recover(v);"
             + "}catch(e){}})();");
 
     static final String PIP_TOGGLE_JS = R("(function(){try{" + PIP_SELECT + "var v=selected();if(!v)return;"
             + "if(v.paused){window.__lasurUserPause=0;play(v)}else{window.__lasurUserPause=1;v.pause()}"
-            + "LumenBridge.media(!v.paused&&!v.ended?1:0,v.videoWidth||0,v.videoHeight||0);"
+            + "LumenBridge.media(!v.paused&&!v.ended?1:0,v.videoWidth||0,v.videoHeight||0,eligible(v)?1:0);"
             + "}catch(e){}})();");
 }

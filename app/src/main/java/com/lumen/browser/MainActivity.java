@@ -597,7 +597,7 @@ public class MainActivity extends Activity {
         try { old.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         t.web = newWebView(t.incognito);
         setupWeb(t);
-        t.loading = false; t.progress = 0; t.video = null; t.mediaPlaying = false; t.injectedFor = null;
+        t.loading = false; t.progress = 0; t.video = null; t.mediaPlaying = false; t.mediaPipEligible = false; t.injectedFor = null;
         if (t == current) {
             webContainer.removeAllViews();
             webContainer.addView(t.web, new FrameLayout.LayoutParams(MATCH, MATCH));
@@ -720,6 +720,7 @@ public class MainActivity extends Activity {
             float translation = startBar + (endBar - startBar) * f;
             toolbar.setTranslationY(translation); divider.setTranslationY(translation);
             content.setTranslationY(startContent + (endContent - startContent) * f);
+            placeFloating();
         });
         anim.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override public void onAnimationEnd(android.animation.Animator animation) {
@@ -752,7 +753,7 @@ public class MainActivity extends Activity {
     /** Height of the address bar when it sits at the bottom (floating buttons and messages go above it). */
     int bottomChrome() {
         if (!store.bottomBar() || toolbar.getVisibility() != View.VISIBLE) return 0;
-        return (toolbar.getHeight() > 0 ? toolbar.getHeight() : dp(56)) + Math.max(1, divider.getHeight());
+        return Math.max(0, (toolbar.getHeight() > 0 ? toolbar.getHeight() : dp(56)) + Math.max(1, divider.getHeight()) - Math.round(toolbar.getTranslationY()));
     }
 
     void placeFloating() {
@@ -760,6 +761,11 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) videoFab.getLayoutParams();
         int want = dp(28) + bottomChrome();
         if (lp.bottomMargin != want) { lp.bottomMargin = want; videoFab.setLayoutParams(lp); }
+        if (snackView != null) {
+            FrameLayout.LayoutParams sp = (FrameLayout.LayoutParams) snackView.getLayoutParams();
+            int margin = dp(videoFab.getVisibility() == View.VISIBLE ? 92 : pwBar != null && pwBar.getVisibility() == View.VISIBLE ? 70 : 20) + bottomChrome();
+            if (sp.bottomMargin != margin) { sp.bottomMargin = margin; snackView.setLayoutParams(sp); }
+        }
     }
 
     /** Puts the address bar above or below the page according to the setting. */
@@ -830,6 +836,12 @@ public class MainActivity extends Activity {
         }
         w.setBackgroundColor(Color.WHITE);
         w.addJavascriptInterface(new Bridge(t), "LumenBridge");
+        // Run ahead of site visibility listeners; progress-time injection is too late on YouTube.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(w,
+                    "if(window===window.top){" + Scripts.R("window.__lasurKeep=" + store.bool("pip", true) + ";") + MEDIA_JS + "}",
+                    java.util.Collections.singleton("*"));
+        }
         w.setWebViewClient(new Client(t));
         w.setWebChromeClient(new Chrome(t));
         w.setDownloadListener((url, ua, cd, mime, len) -> onDownload(t, url, ua, cd, mime, len));
@@ -859,8 +871,8 @@ public class MainActivity extends Activity {
                 d.recycle(); u.recycle();
             });
         }
-        @JavascriptInterface public void media(int playing, int w, int h) {
-            ui.post(() -> { t.mediaPlaying = playing == 1; if (w > 0 && h > 0) { t.mediaW = w; t.mediaH = h; } if (t == current) updatePipParams(); });
+        @JavascriptInterface public void media(int playing, int w, int h, int eligible) {
+            ui.post(() -> { t.mediaPlaying = playing == 1; t.mediaPipEligible = eligible == 1; if (w > 0 && h > 0) { t.mediaW = w; t.mediaH = h; } if (t == current) updatePipParams(); });
         }
         @JavascriptInterface public void ptr(int v) {
             t.ptrJs = v;
@@ -987,7 +999,7 @@ public class MainActivity extends Activity {
             if (t.pwPass != null) maybeOfferSave(t);
             if (t == current) hidePwBar();
             t.ptrJs = -1;
-            t.mediaPlaying = false;
+            t.mediaPlaying = false; t.mediaPipEligible = false;
             t.url = url;
             t.pageUrl = url;
             try { t.pageHost = Uri.parse(url).getHost(); } catch (Exception e) { t.pageHost = null; }
@@ -3253,7 +3265,7 @@ public class MainActivity extends Activity {
             try { setPictureInPictureParams(new PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()); } catch (Exception ex) { android.util.Log.d("Lasur", "pip", ex); }
         }
         leavingByBack = true;
-        if (current != null && current.web != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } current.mediaPlaying = false; }
+        if (current != null && current.web != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } current.mediaPlaying = false; current.mediaPipEligible = false; }
         moveTaskToBack(true);
     }
 
@@ -3379,7 +3391,7 @@ public class MainActivity extends Activity {
 
     void updateVideoFab() {
         boolean show = current != null && !current.ntp && current.video != null && customView == null
-                && switcher.getVisibility() != View.VISIBLE && !omni.hasFocus();
+                && switcher.getVisibility() != View.VISIBLE && !omni.hasFocus() && !isInPictureInPictureMode();
         videoFab.setVisibility(show ? View.VISIBLE : View.GONE);
         placeFloating();
         if (show && videoLabel != null) {
@@ -4124,7 +4136,7 @@ public class MainActivity extends Activity {
 
     void snack(String msg, String action, Runnable r) {
         if (Looper.myLooper() != Looper.getMainLooper()) { ui.post(() -> snack(msg, action, r)); return; }
-        if (root == null || msg == null) return;
+        if (root == null || msg == null || isInPictureInPictureMode()) return;
         if (snackView != null) { final View old = snackView; snackView = null; old.animate().cancel(); old.setVisibility(View.GONE); ui.post(() -> root.removeView(old)); }
         ui.removeCallbacks(snackHide);
         LinearLayout s = new LinearLayout(this);
@@ -4190,6 +4202,7 @@ public class MainActivity extends Activity {
 
     /** Small pill at the top of the screen, e.g. «Полноэкранный режим». */
     void notice(int icon, String msg) {
+        if (isInPictureInPictureMode()) return;
         if (noticeView != null) root.removeView(noticeView);
         LinearLayout n = new LinearLayout(this);
         n.setGravity(Gravity.CENTER_VERTICAL);
@@ -4523,6 +4536,7 @@ public class MainActivity extends Activity {
     static String mask(String p) { StringBuilder b = new StringBuilder(); for (int i = 0; i < Math.min(p.length(), 16); i++) b.append('•'); return b.toString(); }
 
     void showPwBar(Tab t) {
+        if (isInPictureInPictureMode()) return;
         ui.removeCallbacks(pwBlurR);
         if (t != current || !store.bool("pwFill", true) || t.ntp || security(t) != 1) return;
         String site = Passwords.site(t.web.getUrl());
@@ -4852,7 +4866,7 @@ public class MainActivity extends Activity {
         if (t == null || t.web == null) return;
         if (customView != null) hideCustomView();
         try { t.web.evaluateJavascript(PAUSE_JS + "(function(){try{var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{f[i].contentWindow.postMessage('{\\\"event\\\":\\\"command\\\",\\\"func\\\":\\\"pauseVideo\\\",\\\"args\\\":\\\"\\\"}','*')}catch(e){}}}catch(e){}})();", null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
-        t.mediaPlaying = false;
+        t.mediaPlaying = false; t.mediaPipEligible = false;
         if (t == current) updatePipParams();
         try { t.web.onPause(); t.silenced = true; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         if (t.video != null) updateVideoFab();
@@ -5546,7 +5560,8 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- picture-in-picture
-    boolean pipExited, pipClosed, activityVisible;
+    boolean pipExited, pipClosed, activityVisible, pipEntering;
+    boolean pipChromeSaved, pipBarsHidden, pipStripHidden, pipFindVisible;
 
 
     static final String ACTION_PIP_TOGGLE = "com.lumen.browser.PIP_TOGGLE";
@@ -5570,7 +5585,7 @@ public class MainActivity extends Activity {
 
     boolean pipEligible() {
         return !leavingByBack && !pipClosed && store.bool("pip", true) && current != null && !current.ntp && switcher.getVisibility() != View.VISIBLE
-                && (customView != null || current.mediaPlaying);
+                && current.mediaPipEligible && (current.mediaPlaying || pipEntering);
     }
 
     PictureInPictureParams pipParams() {
@@ -5602,6 +5617,11 @@ public class MainActivity extends Activity {
     }
 
     void preparePip() {
+        if (!pipChromeSaved) {
+            pipChromeSaved = true; pipBarsHidden = barsHidden; pipStripHidden = stripHidden;
+            pipFindVisible = findBar.getVisibility() == View.VISIBLE;
+            unfocusOmni(); suggestScroll.setVisibility(View.GONE);
+        }
         resetBars(true);
         if (current != null) current.web.evaluateJavascript(customView == null ? PIP_ON_JS : PIP_FS_JS, null);
         toolbar.setVisibility(View.GONE);
@@ -5617,19 +5637,27 @@ public class MainActivity extends Activity {
     }
 
     void restorePip() {
+        pipEntering = false;
         if (current != null) current.web.evaluateJavascript(PIP_OFF_JS, null);
-        resetBars(false);
-        stripHidden = false;
+        if (pipChromeSaved) {
+            resetBars(pipBarsHidden);
+            stripHidden = pipStripHidden;
+            findBar.setVisibility(pipFindVisible ? View.VISIBLE : View.GONE);
+            pipChromeSaved = false;
+        }
         refreshChrome();
+        if (customView != null) setFullscreenBars(true);
+        placeFloating();
     }
 
     @Override protected void onUserLeaveHint() {
         super.onUserLeaveHint();
         if (leavingByBack) return;
+        pipEntering = pipEligible();
         // Android 12+ performs auto-entry; manual entry here races that transition.
         if (Build.VERSION.SDK_INT >= 31) {
             updatePipParams();
-            if (pipEligible()) current.web.evaluateJavascript(customView == null ? PIP_ON_JS : PIP_FS_JS, null);
+            if (pipEligible()) current.web.evaluateJavascript(PIP_FS_JS, null);
             return;
         }
         if (Build.VERSION.SDK_INT >= 26 && pipEligible() && !isInPictureInPictureMode()) {
@@ -5640,23 +5668,35 @@ public class MainActivity extends Activity {
 
     @Override public void onPictureInPictureModeChanged(boolean in, android.content.res.Configuration c) {
         super.onPictureInPictureModeChanged(in, c);
-        if (in) { pipExited = false; pipClosed = false; preparePip(); }
+        if (in) {
+            pipExited = false; pipClosed = false; pipEntering = false;
+            if (timersPaused && current != null) { current.web.resumeTimers(); timersPaused = false; }
+            if (current != null) current.web.onResume();
+            preparePip();
+            // The player can pause again after the system has resized its surface.
+            for (int delay : new int[]{250, 750, 1500, 3000}) ui.postDelayed(() -> {
+                if (isInPictureInPictureMode() && current != null)
+                    current.web.evaluateJavascript(customView == null ? PIP_ON_JS : PIP_FS_JS, null);
+            }, delay);
+        }
         else {
             pipExited = true; pipClosed = !activityVisible; restorePip();
             // Expanding PiP resumes the Activity; closing it leaves the Activity stopped.
-            ui.postDelayed(() -> { if (!activityVisible && !isInPictureInPictureMode()) stopBackgroundMedia(); }, 250);
+            ui.postDelayed(() -> { if (!activityVisible && !isInPictureInPictureMode()) stopBackgroundMedia(); }, 1000);
         }
         applyInsets();
     }
 
     @Override protected void onResume() {
         super.onResume(); activityVisible = true; pipExited = false; pipClosed = false;
-        leavingByBack = false; updatePipParams();
+        leavingByBack = false;
+        if (!isInPictureInPictureMode()) restorePip();
+        updatePipParams();
     }
 
     void stopBackgroundMedia() {
         if (current == null || current.web == null) return;
-        current.mediaPlaying = false;
+        current.mediaPlaying = false; current.mediaPipEligible = false; pipEntering = false;
         // Turn off transition recovery before pausing; otherwise the pause handler resumes the video.
         try { current.web.evaluateJavascript(PIP_OFF_JS + PAUSE_JS, null); } catch (Exception e) { Log.d(TAG, "stop media", e); }
         updatePipParams();
