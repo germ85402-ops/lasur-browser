@@ -400,6 +400,7 @@ public class MainActivity extends Activity {
         progress.setVisibility(View.GONE);
         content.addView(progress, new FrameLayout.LayoutParams(MATCH, dp(3), Gravity.TOP));
         if (store.bottomBar()) layoutBars();
+        toolbar.addOnLayoutChangeListener((v, l, t2, r, b2, ol, ot, or, ob) -> { if (b2 - t2 != ob - ot) placeFloating(); });
 
         videoFab = new FrameLayout(this);
         videoFab.setBackground(Ui.round(Ui.ACCENT, 26));
@@ -519,7 +520,7 @@ public class MainActivity extends Activity {
     }
 
     void selectTab(Tab t) {
-        if (toolbar != null) setBarsHidden(false);
+        if (toolbar != null) resetBars(false);
         if (current != null && current != t) {
             captureThumb(current);
             try { current.web.evaluateJavascript(PAUSE_JS, null); current.web.onPause(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
@@ -671,7 +672,8 @@ public class MainActivity extends Activity {
     int scrollAcc;
     void onWebScroll(View v, int y, int oy) {
         if (current == null || current.web != v || !store.hideOnScroll() || customView != null) return;
-        if (omni.hasFocus() || findBar.getVisibility() == View.VISIBLE) { setBarsHidden(false); return; }
+        if (findBar.getVisibility() == View.VISIBLE || toolbar.getAnimation() != null) return;
+        if (omni.hasFocus()) { setBarsHidden(false); return; }
         int dy = y - oy;
         if ((dy > 0) != (scrollAcc > 0)) scrollAcc = 0;
         scrollAcc += dy;
@@ -680,12 +682,61 @@ public class MainActivity extends Activity {
         else if (scrollAcc < -dp(32)) setBarsHidden(false);
     }
 
+    boolean barsHidden;
+    static final int BAR_ANIM_MS = 200;
+
+    /**
+     * Slides the address bar away / back. The page is moved with translation during the animation and the
+     * WebView is resized only once at the end (or start), so the content no longer jumps.
+     */
     void setBarsHidden(boolean hide) {
-        int vis = hide ? View.GONE : View.VISIBLE;
-        if (toolbar.getVisibility() == vis) return;
+        if (barsHidden == hide && toolbar.getVisibility() == (hide ? View.GONE : View.VISIBLE)) return;
+        barsHidden = hide;
+        scrollAcc = 0;
+        final boolean bottom = store.bottomBar();
+        final View[] bars = {toolbar, divider};
+        for (View v : bars) v.animate().cancel();
+        content.animate().cancel();
+        int h = toolbar.getHeight() + divider.getHeight();
+        if (h == 0 || !toolbar.isLaidOut()) { resetBars(hide); return; }
+        android.view.animation.Interpolator ip = new android.view.animation.DecelerateInterpolator(1.5f);
+        float off = bottom ? h : -h;
+        if (hide) {
+            for (View v : bars) v.animate().translationY(off).setDuration(BAR_ANIM_MS).setInterpolator(ip).start();
+            if (!bottom) content.animate().translationY(-h).setDuration(BAR_ANIM_MS).setInterpolator(ip).start();
+            toolbar.animate().withEndAction(() -> { if (barsHidden) resetBars(true); });
+        } else {
+            toolbar.setVisibility(View.VISIBLE);
+            divider.setVisibility(View.VISIBLE);
+            for (View v : bars) { v.setTranslationY(off); v.animate().translationY(0).setDuration(BAR_ANIM_MS).setInterpolator(ip).start(); }
+            if (!bottom) { content.setTranslationY(-h); content.animate().translationY(0).setDuration(BAR_ANIM_MS).setInterpolator(ip).start(); }
+        }
+        placeFloating();
+    }
+
+    /** Applies the final bar state at once (no animation). */
+    void resetBars(boolean hidden) {
+        barsHidden = hidden;
+        int vis = hidden ? View.GONE : View.VISIBLE;
         toolbar.setVisibility(vis);
         divider.setVisibility(vis);
-        scrollAcc = 0;
+        toolbar.setTranslationY(0);
+        divider.setTranslationY(0);
+        content.setTranslationY(0);
+        placeFloating();
+    }
+
+    /** Height of the address bar when it sits at the bottom (floating buttons and messages go above it). */
+    int bottomChrome() {
+        if (!store.bottomBar() || barsHidden || toolbar.getVisibility() != View.VISIBLE) return 0;
+        return (toolbar.getHeight() > 0 ? toolbar.getHeight() : dp(56)) + Math.max(1, divider.getHeight());
+    }
+
+    void placeFloating() {
+        if (videoFab == null) return;
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) videoFab.getLayoutParams();
+        int want = dp(28) + bottomChrome();
+        if (lp.bottomMargin != want) { lp.bottomMargin = want; videoFab.setLayoutParams(lp); }
     }
 
     /** Puts the address bar above or below the page according to the setting. */
@@ -704,7 +755,7 @@ public class MainActivity extends Activity {
             mainCol.addView(content, new LinearLayout.LayoutParams(MATCH, 0, 1));
         }
         progress.setLayoutParams(new FrameLayout.LayoutParams(MATCH, dp(3), bottom ? Gravity.BOTTOM : Gravity.TOP));
-        setBarsHidden(false);
+        resetBars(false);
     }
 
     CookieManager cookies(boolean inc) {
@@ -3076,6 +3127,7 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ find & back
     void showFind() {
+        resetBars(false);
         toolbar.setVisibility(View.GONE);
         findBar.setVisibility(View.VISIBLE);
         findInput.setText("");
@@ -3086,7 +3138,7 @@ public class MainActivity extends Activity {
     void hideFind() {
         if (current != null) current.web.clearMatches();
         findBar.setVisibility(View.GONE);
-        toolbar.setVisibility(View.VISIBLE);
+        resetBars(false);
         hideKb(findInput);
         root.requestFocus();
     }
@@ -3237,6 +3289,7 @@ public class MainActivity extends Activity {
         boolean show = current != null && !current.ntp && current.video != null && customView == null
                 && switcher.getVisibility() != View.VISIBLE && !omni.hasFocus();
         videoFab.setVisibility(show ? View.VISIBLE : View.GONE);
+        placeFloating();
         if (show && videoLabel != null) {
             String ty = current.video.type;
             videoLabel.setText(ty.equals("HLS") || ty.equals("DASH") || ty.equals("VIDEO") ? L.t("Видео") : L.t("Видео · ") + ty);
@@ -3998,7 +4051,7 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(sw - dp(24), dp(560)), WRAP, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         boolean fab = videoFab != null && videoFab.getVisibility() == View.VISIBLE;
         boolean bar = pwBar != null && pwBar.getVisibility() == View.VISIBLE;
-        lp.bottomMargin = dp(fab ? 92 : bar ? 70 : 20);
+        lp.bottomMargin = dp(fab ? 92 : bar ? 70 : 20) + bottomChrome();
         root.addView(s, lp);
         snackView = s;
         s.setAlpha(0f);
@@ -5454,8 +5507,7 @@ public class MainActivity extends Activity {
 
     void restorePip() {
         if (current != null) current.web.evaluateJavascript(PIP_OFF_JS, null);
-        toolbar.setVisibility(View.VISIBLE);
-        divider.setVisibility(View.VISIBLE);
+        resetBars(false);
         stripHidden = false;
         refreshChrome();
     }
