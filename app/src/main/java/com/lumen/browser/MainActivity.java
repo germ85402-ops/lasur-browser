@@ -126,26 +126,33 @@ public class MainActivity extends Activity {
             + "tion pr(o,d){try{if(!o||typeof o!='object'||d>4)return o;for(var i=0;i<K.length;i++)if(K[i] in o)delete o[K[i]];if(o.playerResponse)pr(o.playerRespons"
             + "e,d+1);if(o.response)pr(o.response,d+1);if(o.playerConfig&&o.playerConfig.daiConfig)delete o.playerConfig.daiConfig;if(Array.isArray(o)){for(var j=0;j"
             + "<o.length;j++)pr(o[j],d+1)}}catch(e){}return o}function trap(n){try{var v=window[n];if(v)pr(v,0);Object.defineProperty(window,n,{configurable:true,get"
-            + ":function(){return v},set:function(x){v=pr(x,0)}})}catch(e){}}trap('ytInitialPlayerResponse');trap('ytInitialData');try{var yp=window.ytplayer||{};if("
-            + "yp.config&&yp.config.args&&yp.config.args.raw_player_response)pr(yp.config.args.raw_player_response,0)}catch(e){}function hit(u){u=String(u||'');retur"
-            + "n u.indexOf('/youtubei/v1/player')>=0||u.indexOf('/youtubei/v1/next')>=0||u.indexOf('/youtubei/v1/reel')>=0||u.indexOf('/youtubei/v1/browse')>=0}try{v"
-            + "ar of=window.fetch;window.fetch=function(i,o){var u=typeof i=='string'?i:(i&&i.url);var p=of.apply(this,arguments);if(!hit(u))return p;return p.then(f"
-            + "unction(r){if(!r||!r.ok)return r;return r.clone().text().then(function(t){try{var j=JSON.parse(t);pr(j,0);return new Response(JSON.stringify(j),{statu"
-            + "s:r.status,statusText:r.statusText,headers:r.headers})}catch(e){return r}},function(){return r})})}}catch(e){}try{var oo=XMLHttpRequest.prototype.open"
-            + ";XMLHttpRequest.prototype.open=function(m,u){this.__lu=u;return oo.apply(this,arguments)};var gd=Object.getOwnPropertyDescriptor(XMLHttpRequest.protot"
-            + "ype,'responseText'),gr=Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype,'response');function fix(x,s){if(!hit(x.__lu)||typeof s!='string'||x.r"
-            + "eadyState!=4)return s;if(x.__lc!==undefined)return x.__lc;try{var j=JSON.parse(s);pr(j,0);x.__lc=JSON.stringify(j)}catch(e){x.__lc=s}return x.__lc}Obj"
-            + "ect.defineProperty(XMLHttpRequest.prototype,'responseText',{configurable:true,get:function(){return fix(this,gd.get.call(this))}});Object.defineProper"
-            + "ty(XMLHttpRequest.prototype,'response',{configurable:true,get:function(){var r=gr.get.call(this);return (this.responseType==''||this.responseType=='te"
-            + "xt')?fix(this,r):r}});}catch(e){}try{var st=document.createElement('style');st.textContent='.ytp-ad-module,.ytp-ad-overlay-container,.ytp-ad-player-ov"
-            + "erlay,.ytp-ad-text,.ytp-ad-preview-container,.ytp-ad-skip-button-container,.ytp-skip-ad,.ytm-skip-ad-button,ytm-promoted-sparkles-web-renderer,ytm-com"
-            + "panion-ad-renderer,ytd-ad-slot-renderer,ad-slot-renderer,ytm-ad-slot-renderer,.video-ads,#player-ads,ytm-promoted-video-renderer{display:none!importan"
-            + "t}.ad-showing video,.ad-interrupting video{opacity:0!important}';(document.head||document.documentElement).appendChild(st)}catch(e){}function skip(){t"
-            + "ry{var a=document.querySelector('.ad-showing,.ad-interrupting');if(!a){if(window.__lasurAdV){var q=window.__lasurAdV;window.__lasurAdV=null;try{q.mute"
-            + "d=!!window.__lasurAdWasMuted;if(q.playbackRate==16)q.playbackRate=1}catch(e){}}return}var p=a.querySelector('video');if(p){if(!window.__lasurAdV){wind"
-            + "ow.__lasurAdV=p;window.__lasurAdWasMuted=p.muted}p.muted=true;try{p.playbackRate=16}catch(e){}if(isFinite(p.duration)&&p.duration>0&&p.currentTime<p.d"
-            + "uration-0.1)p.currentTime=p.duration}var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,.ytm-skip-ad-but"
-            + "ton button,.ytm-skip-ad-button');if(b)b.click()}catch(e){}}setInterval(skip,200);})();";
+            + ":function(){return v},set:function(x){v=pr(x,0)}})}catch(e){}}try{var jp=JSON.parse;JSON.parse=function(){var r=jp.apply(this,arguments);try{if(r&&typ"
+            + "eof r=='object'&&(r.adPlacements||r.playerAds||r.adSlots||r.playerResponse||(r.response&&typeof r.response=='object')))pr(r,0)}catch(e){}return r};var"
+            + " rj=Response.prototype.json;Response.prototype.json=function(){return rj.apply(this,arguments).then(function(o){return pr(o,0)})}}catch(e){}trap('ytIn"
+            + "itialPlayerResponse');trap('ytInitialData');try{var yp=window.ytplayer||{};if(yp.config&&yp.config.args&&yp.config.args.raw_player_response)pr(yp.conf"
+            + "ig.args.raw_player_response,0)}catch(e){}function hit(u){u=String(u||'');return u.indexOf('/youtubei/v1/player')>=0||u.indexOf('/youtubei/v1/next')>=0"
+            + "||u.indexOf('/youtubei/v1/reel')>=0||u.indexOf('/youtubei/v1/browse')>=0}try{var of=window.fetch;window.fetch=function(i,o){var u=typeof i=='string'?i"
+            + ":(i&&i.url);var p=of.apply(this,arguments);if(!hit(u))return p;return p.then(function(r){if(!r||!r.ok)return r;return r.clone().text().then(function(t"
+            + "){try{var j=JSON.parse(t);pr(j,0);return new Response(JSON.stringify(j),{status:r.status,statusText:r.statusText,headers:r.headers})}catch(e){return r"
+            + "}},function(){return r})})}}catch(e){}try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){this.__lu=u;return oo.apply"
+            + "(this,arguments)};var gd=Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype,'responseText'),gr=Object.getOwnPropertyDescriptor(XMLHttpRequest.pr"
+            + "ototype,'response');function fix(x,s){if(!hit(x.__lu)||typeof s!='string'||x.readyState!=4)return s;if(x.__lc!==undefined)return x.__lc;try{var j=JSON"
+            + ".parse(s);pr(j,0);x.__lc=JSON.stringify(j)}catch(e){x.__lc=s}return x.__lc}Object.defineProperty(XMLHttpRequest.prototype,'responseText',{configurable"
+            + ":true,get:function(){return fix(this,gd.get.call(this))}});Object.defineProperty(XMLHttpRequest.prototype,'response',{configurable:true,get:function()"
+            + "{var r=gr.get.call(this);return (this.responseType==''||this.responseType=='text')?fix(this,r):r}});}catch(e){}try{var st=document.createElement('styl"
+            + "e');st.textContent='.ytp-ad-module,.ytp-ad-overlay-container,.ytp-ad-player-overlay,.ytp-ad-text,.ytp-ad-preview-container,ytm-promoted-sparkles-web-r"
+            + "enderer,ytm-companion-ad-renderer,ytd-ad-slot-renderer,ad-slot-renderer,ytm-ad-slot-renderer,.video-ads,#player-ads,ytm-promoted-video-renderer{displa"
+            + "y:none!important}.ytp-ad-skip-button-container,.ytp-skip-ad,.ytm-skip-ad-button{opacity:0.01!important}.ad-showing video,.ad-interrupting video{opacit"
+            + "y:0!important}';(document.head||document.documentElement).appendChild(st)}catch(e){}var lastTap=0;function skip(){try{var a=document.querySelector('.a"
+            + "d-showing,.ad-interrupting');if(!a){if(window.__lasurAdV){var q=window.__lasurAdV;window.__lasurAdV=null;try{q.muted=!!window.__lasurAdWasMuted;if(q.p"
+            + "laybackRate>2)q.playbackRate=1}catch(e){}}return}var p=a.querySelector('video');if(p){if(!window.__lasurAdV){window.__lasurAdV=p;window.__lasurAdWasMu"
+            + "ted=p.muted}p.muted=true;try{if(p.playbackRate<16)p.playbackRate=16}catch(e){}if(isFinite(p.duration)&&p.duration>0&&p.currentTime<p.duration-0.05){tr"
+            + "y{p.currentTime=p.duration}catch(e){}}if(p.paused)try{p.play()}catch(e){}}var bs=document.querySelectorAll('.ytp-ad-skip-button,.ytp-ad-skip-button-mo"
+            + "dern,.ytp-skip-ad-button,.ytm-skip-ad-button button,.ytm-skip-ad-button,button[class*=skip-ad],[class*=ad-skip] button');for(var i=0;i<bs.length;i++){"
+            + "var b=bs[i];b.click();var r=b.getBoundingClientRect();var now=Date.now();if(r.width>0&&r.height>0&&now-lastTap>700&&window.LumenBridge&&LumenBridge.ta"
+            + "p){lastTap=now;var d=window.devicePixelRatio||1;LumenBridge.tap((r.left+r.width/2)*d,(r.top+r.height/2)*d)}break}}catch(e){}}['loadedmetadata','durati"
+            + "onchange','timeupdate','playing','canplay'].forEach(function(n){document.addEventListener(n,function(e){if(e.target&&e.target.tagName=='VIDEO'&&e.targ"
+            + "et.closest&&e.target.closest('.ad-showing,.ad-interrupting'))skip()},true)});setInterval(skip,150);})();";
 
     // ------------------------------------------------------------------ lifecycle
     @Override protected void onCreate(Bundle b) {
@@ -577,6 +584,18 @@ public class MainActivity extends Activity {
             if (url != null && url.startsWith("http")) ui.post(() -> addVideo(t, url, t.pageUrl, title));
         }
         @JavascriptInterface public String css(String host) { return AdBlocker.cssFor(host); }
+        @JavascriptInterface public void tap(float x, float y) {
+            ui.post(() -> {
+                if (t.pageHost == null || !t.pageHost.endsWith("youtube.com") || t.web == null) return;
+                long n = android.os.SystemClock.uptimeMillis();
+                MotionEvent d = MotionEvent.obtain(n, n, MotionEvent.ACTION_DOWN, x, y, 0);
+                MotionEvent u = MotionEvent.obtain(n, n + 30, MotionEvent.ACTION_UP, x, y, 0);
+                d.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                u.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { t.web.dispatchTouchEvent(d); t.web.dispatchTouchEvent(u); } catch (Exception ignored) { }
+                d.recycle(); u.recycle();
+            });
+        }
         @JavascriptInterface public void media(int playing, int w, int h) {
             ui.post(() -> { t.mediaPlaying = playing == 1; if (w > 0 && h > 0) { t.mediaW = w; t.mediaH = h; } if (t == current) updatePipParams(); });
         }
@@ -3054,7 +3073,7 @@ public class MainActivity extends Activity {
                     toast(L.t("Данные удалены"));
                 }).setNegativeButton(L.t("Отмена"), null).show());
         section(box, L.t("О браузере"));
-        actionRow(box, "Lasur 1.7.3", L.t("Браузер без рекламы с загрузкой видео"), null);
+        actionRow(box, "Lasur 1.7.4", L.t("Браузер без рекламы с загрузкой видео"), null);
         settingsDialog = fullDialog(L.t("Настройки"), sv, null, null);
     }
 
