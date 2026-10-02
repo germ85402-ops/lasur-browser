@@ -21,7 +21,7 @@ final class Ui {
     static int CHIP, CHIP2, SNACK, PTR;
 
     static final String[] ACCENT_NAMES = {"Синий", "Зелёный", "Фиолетовый", "Розовый", "Оранжевый", "Бирюзовый", "Красный"};
-    static final int[] ACCENT_LIGHT = {0xFF1A73E8, 0xFF188038, 0xFF8430CE, 0xFFD01884, 0xFFE8710A, 0xFF007B83, 0xFFD93025};
+    static final int[] ACCENT_LIGHT = {0xFF1A73E8, 0xFF188038, 0xFF8430CE, 0xFFD01884, 0xFFB95000, 0xFF007B83, 0xFFD93025};
     static final int[] ACCENT_DARK = {0xFF8AB4F8, 0xFF81C995, 0xFFC58AF9, 0xFFFF8BCB, 0xFFFCAD70, 0xFF78D9EC, 0xFFF28B82};
     static final String[] MODE_NAMES = {"Как в системе", "Светлая", "Тёмная", "Чёрная (AMOLED)"};
     static int TONAL, ON_TONAL, CARD, mode, accent;

@@ -20,6 +20,17 @@ public class AdBlockerTest {
         assertFalse(AdBlocker.shouldBlock("https://example.com/x.js", "example.com", "news.ru", AdBlocker.T_SCRIPT));
     }
 
+    @Test public void unconditionalHostRuleAlsoBlocksFirstParty() throws Exception {
+        AdBlocker.loadForTest("||ads.example.com^\n");
+        assertTrue(AdBlocker.shouldBlock("https://ads.example.com/banner.js", "ads.example.com", "ads.example.com", AdBlocker.T_SCRIPT));
+    }
+
+    @Test public void thirdPartyExceptionDoesNotOverrideFirstPartyRule() throws Exception {
+        AdBlocker.loadForTest("||cdn.example.com^$~third-party\n@@||cdn.example.com^$third-party\n");
+        assertTrue(AdBlocker.shouldBlock("https://cdn.example.com/a.js", "cdn.example.com", "cdn.example.com", AdBlocker.T_SCRIPT));
+        assertFalse(AdBlocker.shouldBlock("https://cdn.example.com/a.js", "cdn.example.com", "news.ru", AdBlocker.T_SCRIPT));
+    }
+
     @Test public void resourceTypeOptions() throws Exception {
         AdBlocker.loadForTest("||tracker.net^$script\n/banner/*$image,~third-party\n");
         assertTrue(AdBlocker.shouldBlock("https://tracker.net/t.js", "tracker.net", "site.com", AdBlocker.T_SCRIPT));

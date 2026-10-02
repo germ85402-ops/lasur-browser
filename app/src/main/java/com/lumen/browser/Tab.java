@@ -13,6 +13,7 @@ final class Tab {
         Video(String url, String page, String title) { this.url = url; this.page = page; this.title = title; }
     }
     WebView web;
+    final java.util.Map<String, Integer> privatePermissions = new java.util.HashMap<>();
     boolean incognito, ntp = true, desktop, fromNtp, popup, loading;
     String title = "", url = "", pendingUrl;
     volatile String pageUrl, pageHost;

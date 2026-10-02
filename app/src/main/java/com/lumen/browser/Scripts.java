@@ -66,7 +66,7 @@ final class Scripts {
             + "onchange','timeupdate','playing','canplay'].forEach(function(n){document.addEventListener(n,function(e){if(e.target&&e.target.tagName=='VIDEO'&&e.targ"
             + "et.closest&&e.target.closest('.ad-showing,.ad-interrupting'))skip()},true)});setInterval(skip,150);})();");
 
-    static final String PAUSE_JS = R("(function(){try{document.querySelectorAll('video,audio').forEach(function(m){if(!m.paused)m.pause()})}catch(e){}})();");
+    static final String PAUSE_JS = R("(function(){try{window.__lasurUserPause=1;document.querySelectorAll('video,audio').forEach(function(m){if(!m.paused)m.pause()})}catch(e){}})();");
 
     static final String SCROLL_JS = R("(function(){var e=document.scrollingElement||document.documentElement;return (window.scrollX||0)+','+(window.scrollY||e.scrollTop||0)})()");
 
@@ -128,38 +128,52 @@ final class Scripts {
             + "var u0=uf(pf)||(a&&a!=pf&&txt(a)?a:null);if(u0&&u&&!(auto&&u0.value))set(u0,u);set(pf,p);return}"
             + "if(!auto&&a&&txt(a)&&u)set(a,u)}catch(x){}})");
 
-    static final String MEDIA_JS = R("(function(){if(window.__lasurMedia)return;window.__lasurMedia=1;var last='';"
-            + "function playing(){var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++)if(!vs[i].paused&&!vs[i].ended)return true;return false}"
-            + "function keep(){return window.__lasurKeep&&(window.__lasurPip||playing()||Date.now()-(window.__lasurLastPlay||0)<1500)}"
+    // Shared selection logic: control only the video shown in PiP, never every video on the page.
+    private static final String PIP_SELECT = "function selected(){var old=window.__lasurPipVideo;if(window.__lasurPip&&old&&old.isConnected&&!old.ended)return old;"
+            + "var best=null,score=-1,vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];if(v.ended)continue;var r=v.getBoundingClientRect();"
+            + "var a=r.width*r.height+(!v.paused?1e9:0)+(v.currentTime>0?1e8:0);if(a>score){score=a;best=v}}return best}"
+            + "function play(v){try{var p=v.play();if(p&&p.catch)p.catch(function(){})}catch(e){}}"
+            + "function begin(){if(!window.__lasurPip){window.__lasurPipAt=Date.now();window.__lasurUserPause=0;window.__lasurResN=0;}"
+            + "window.__lasurPip=1;var v=selected();window.__lasurPipVideo=v;return v}";
+
+    static final String MEDIA_JS = R("(function(){if(window.__lasurMedia)return;window.__lasurMedia=1;var last='';" + PIP_SELECT
+            + "function playing(){var v=selected();return !!(v&&!v.paused&&!v.ended)}"
+            + "function keep(){return window.__lasurKeep&&(window.__lasurPip||playing()&&Date.now()-(window.__lasurLastPlay||0)<1500)}"
             + "try{var D=Document.prototype,hd=Object.getOwnPropertyDescriptor(D,'hidden'),vd=Object.getOwnPropertyDescriptor(D,'visibilityState');"
             + "Object.defineProperty(document,'hidden',{configurable:true,get:function(){return keep()?false:hd.get.call(document)}});"
             + "Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return keep()?'visible':vd.get.call(document)}});"
-            + "try{var hf=Document.prototype.hasFocus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}"
-            + "Object.defineProperty(document,'webkitHidden',{configurable:true,get:function(){return document.hidden}});"
-            + "Object.defineProperty(document,'webkitVisibilityState',{configurable:true,get:function(){return document.visibilityState}});}catch(e){}"
+            + "var hf=Document.prototype.hasFocus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}"
             + "['visibilitychange','webkitvisibilitychange','blur','pagehide','freeze'].forEach(function(n){window.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true);"
             + "document.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true)});"
-            + "setInterval(function(){if(playing())window.__lasurLastPlay=Date.now()},500);"
-            + "function rep(){try{var best=null,ba=0;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];"
-            + "if(!v.paused&&!v.ended&&v.readyState>1){var r=v.getBoundingClientRect(),a=r.width*r.height;if(a>=ba){ba=a;best=v}}}"
-            + "var s=(best?1:0)+','+(best?best.videoWidth:0)+','+(best?best.videoHeight:0);if(s!=last){last=s;LumenBridge.media(best?1:0,best?best.videoWidth:0,best?best.videoHeight:0)}}catch(e){}}"
-            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){if(n=='playing')window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&!window.__lasurUserPause){var t=e.target,now=Date.now();if(now-(window.__lasurResT||0)>10000){window.__lasurResT=now;window.__lasurResN=0}if(!t.ended&&t.currentTime>0&&(window.__lasurResN=(window.__lasurResN||0)+1)<=3)setTimeout(function(){try{if(t.paused&&window.__lasurPip&&!window.__lasurUserPause)t.play()}catch(x){}},80)}setTimeout(rep,50)},true)});setInterval(rep,1500);rep();})();");
+            + "function rep(){try{var v=selected(),on=v&&!v.paused&&!v.ended&&v.readyState>1;"
+            + "var s=(on?1:0)+','+(v?v.videoWidth:0)+','+(v?v.videoHeight:0);if(s!=last){last=s;LumenBridge.media(on?1:0,v?v.videoWidth:0,v?v.videoHeight:0)}}catch(e){}}"
+            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){"
+            + "if(n=='playing')window.__lasurLastPlay=Date.now();"
+            + "if(n=='pause'&&window.__lasurPip&&!window.__lasurUserPause&&e.target===window.__lasurPipVideo&&Date.now()-window.__lasurPipAt<1500){"
+            + "var t=e.target;if(!t.ended&&t.currentTime>0&&(window.__lasurResN=(window.__lasurResN||0)+1)<=2)setTimeout(function(){"
+            + "if(t.paused&&window.__lasurPip&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500)play(t)},80)}setTimeout(rep,50)},true)});"
+            + "setInterval(rep,1000);rep();})();");
 
-    static final String PIP_ON_JS = R("(function(){try{window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
-            + "a=r.width*r.height+(v.paused?0:1e9);if(a>ba){ba=a;best=v}}if(!best)return;var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"
+    static final String PIP_ON_JS = R("(function(){try{" + PIP_SELECT + "var best=begin();if(!best)return;"
+            + "var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"
             + "st.textContent='.__lasurPipA{transform:none!important;filter:none!important;contain:none!important;perspective:none!important;will-change:auto!important;z-index:2147483646!important}'"
-            + "+'.__lasurPipV{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;"
-            + "object-fit:contain!important;background:#000!important;z-index:2147483647!important;margin:0!important;transform:none!important;visibility:visible!important;opacity:1!important}'"
+            + "+'.__lasurPipV{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;object-fit:contain!important;background:#000!important;z-index:2147483647!important;margin:0!important;transform:none!important;visibility:visible!important;opacity:1!important}'"
             + "+'html.__lasurPipH,html.__lasurPipH body{overflow:hidden!important;background:#000!important}';(document.head||document.documentElement).appendChild(st)}"
             + "best.classList.add('__lasurPipV');for(var n=best.parentElement;n&&n!=document.documentElement;n=n.parentElement)n.classList.add('__lasurPipA');"
-            + "document.documentElement.classList.add('__lasurPipH');if(best.paused&&Date.now()-(window.__lasurLastPlay||0)<5000)best.play();}catch(e){}})();");
+            + "document.documentElement.classList.add('__lasurPipH');"
+            + "if(best.paused&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500&&Date.now()-(window.__lasurLastPlay||0)<1500)play(best);"
+            + "}catch(e){}})();");
 
-    static final String PIP_OFF_JS = R("(function(){try{window.__lasurPip=0;var a=document.querySelectorAll('.__lasurPipA,.__lasurPipV');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurPipA','__lasurPipV');"
+    static final String PIP_OFF_JS = R("(function(){try{window.__lasurPip=0;window.__lasurUserPause=1;window.__lasurPipVideo=null;"
+            + "var a=document.querySelectorAll('.__lasurPipA,.__lasurPipV');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurPipA','__lasurPipV');"
             + "document.documentElement.classList.remove('__lasurPipH');var s=document.getElementById('__lasurPip');if(s)s.remove();}catch(e){}})();");
 
-    static final String PIP_FS_JS = R("(function(){window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();try{var v=document.querySelectorAll('video');for(var i=0;i<v.length;i++)if(v[i].paused&&Date.now()-(window.__lasurLastPlay||0)<5000&&v[i].currentTime>0)v[i].play()}catch(e){}})();");
+    static final String PIP_FS_JS = R("(function(){try{" + PIP_SELECT + "var v=begin();"
+            + "if(v&&v.paused&&!window.__lasurUserPause&&Date.now()-window.__lasurPipAt<1500&&Date.now()-(window.__lasurLastPlay||0)<1500)play(v);"
+            + "}catch(e){}})();");
 
-    static final String PIP_TOGGLE_JS = R("(function(){try{var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
-            + "a=r.width*r.height+(v.paused?0:1e9)+(v.currentTime>0?1e8:0);if(a>ba){ba=a;best=v}}if(!best)return;"
-            + "if(best.paused){window.__lasurUserPause=0;best.play()}else{window.__lasurUserPause=1;best.pause()}}catch(e){}})();");
+    static final String PIP_TOGGLE_JS = R("(function(){try{" + PIP_SELECT + "var v=selected();if(!v)return;"
+            + "if(v.paused){window.__lasurUserPause=0;play(v)}else{window.__lasurUserPause=1;v.pause()}"
+            + "LumenBridge.media(!v.paused&&!v.ended?1:0,v.videoWidth||0,v.videoHeight||0);"
+            + "}catch(e){}})();");
 }

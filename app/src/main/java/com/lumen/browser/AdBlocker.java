@@ -52,6 +52,7 @@ final class AdBlocker {
     }
 
     static final class Engine {
+        final HashSet<String> filterHosts = new HashSet<>(); // unconditional ABP rules, including first-party
         final HashSet<String> hosts = new HashSet<>(200000), allowHosts = new HashSet<>(), docAllow = new HashSet<>(), noGenericHide = new HashSet<>();
         final HashMap<String, ArrayList<Rule>> block = new HashMap<>(), allow = new HashMap<>();
         final ArrayList<Rule> blockAny = new ArrayList<>(), allowAny = new ArrayList<>();
@@ -109,6 +110,7 @@ final class AdBlocker {
             Engine tmp = new Engine();
             try { parseFilter(bf, tmp); } catch (Exception ignored) { continue; }
             e.hosts.removeAll(tmp.hosts);
+            e.filterHosts.removeAll(tmp.filterHosts);
             e.allowHosts.removeAll(tmp.allowHosts);
             for (ArrayList<Rule> l : tmp.block.values()) for (Rule r : l) keys.add(r.key());
             for (ArrayList<Rule> l : tmp.allow.values()) for (Rule r : l) keys.add(r.key());
@@ -325,8 +327,8 @@ final class AdBlocker {
         if (docOpt || hideOpt) return;
         if (p.isEmpty() || p.equals("*") || p.equals("|") || p.equals("||")) return;
         String sh = simpleHost(p);
-        if (sh != null && rule.inc == null && rule.exc == null && rule.party != 2 && rule.types == 0 && !rule.important) {
-            (allow ? e.allowHosts : e.hosts).add(sh);
+        if (sh != null && rule.inc == null && rule.exc == null && rule.party == 0 && rule.types == 0 && !rule.important) {
+            (allow ? e.allowHosts : e.filterHosts).add(sh);
             e.netRules++;
             return;
         }
@@ -526,7 +528,7 @@ final class AdBlocker {
         }
     }
 
-    static boolean isAd(String host) { return host != null && hostIn(eng.hosts, host.toLowerCase()); }
+    static boolean isAd(String host) { return host != null && (hostIn(eng.hosts, host.toLowerCase()) || hostIn(eng.filterHosts, host.toLowerCase())); }
 
     /** True if a request to host from pageHost counts as third-party (different registrable domains). */
     static boolean shouldBlockThirdParty(String host, String pageHost) { return !base(host).equals(base(pageHost)); }
@@ -582,7 +584,7 @@ final class AdBlocker {
         Rule br = anyRule(e.block, e.blockAny, u, hs, he, third, ph, type);
         boolean important = br != null && br.important;
         if (!important && hostIn(e.allowHosts, h)) return false;
-        boolean blocked = br != null || (third && hostIn(e.hosts, h));
+        boolean blocked = br != null || hostIn(e.filterHosts, h) || (third && hostIn(e.hosts, h));
         if (!blocked) return false;
         if (!important && anyRule(e.allow, e.allowAny, u, hs, he, third, ph, type) != null) return false;
         totalBlocked.incrementAndGet();

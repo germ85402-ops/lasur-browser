@@ -177,6 +177,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() {
         super.onPause();
+        activityVisible = false;
         saveTabs();
         store.flush();
         store.p.edit().putLong("blockedTotal", AdBlocker.totalBlocked.get()).apply();
@@ -184,6 +185,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        abortBlobs(null);
         if (dlReceiver != null) { try { unregisterReceiver(dlReceiver); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
         if (pipReceiver != null) { try { unregisterReceiver(pipReceiver); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
         for (Tab t : tabs) { try { t.web.destroy(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
@@ -323,20 +325,20 @@ public class MainActivity extends Activity {
 
         homeBtn = Ui.iconBtn(this, R.drawable.ic_home, Ui.TEXT2);
         homeBtn.setOnClickListener(v -> goHome());
-        toolbar.addView(homeBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        toolbar.addView(homeBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
         backBtn = Ui.iconBtn(this, R.drawable.ic_back, Ui.TEXT2);
         backBtn.setOnClickListener(v -> { if (current != null && !current.ntp && current.web.canGoBack()) current.web.goBack(); else handleBack(); });
         backBtn.setVisibility(View.GONE);
-        toolbar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        toolbar.addView(backBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         omniPill = new LinearLayout(this);
         omniPill.setGravity(Gravity.CENTER_VERTICAL);
         omniPill.setPaddingRelative(dp(3), 0, dp(2), 0);
         lockIcon = Ui.iconBtn(this, R.drawable.ic_search, Ui.TEXT2);
         lockIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        lockIcon.setPaddingRelative(dp(9), dp(9), dp(9), dp(9));
+        lockIcon.setPaddingRelative(dp(15), dp(15), dp(15), dp(15));
         lockIcon.setOnClickListener(v -> showSiteInfo());
-        omniPill.addView(lockIcon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        omniPill.addView(lockIcon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         omni = new EditText(this);
         omni.setBackground(null);
         omni.setSingleLine(true);
@@ -350,11 +352,11 @@ public class MainActivity extends Activity {
         clearBtn = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
         clearBtn.setVisibility(View.GONE);
         clearBtn.setOnClickListener(v -> omni.setText(""));
-        omniPill.addView(clearBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        omniPill.addView(clearBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
         micBtn = Ui.iconBtn(this, R.drawable.ic_mic, Ui.TEXT2);
         micBtn.setOnClickListener(v -> voiceSearch());
-        omniPill.addView(micBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(44), 1);
+        omniPill.addView(micBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(48), 1);
         plp.setMargins(dp(4), 0, dp(4), 0);
         toolbar.addView(omniPill, plp);
 
@@ -367,11 +369,11 @@ public class MainActivity extends Activity {
         tabBtn.addView(tabCount, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
         tabBtn.setOnClickListener(v -> showSwitcher());
         tabBtn.setOnLongClickListener(v -> { newTab(null, current != null && current.incognito, true, null); return true; });
-        toolbar.addView(tabBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        toolbar.addView(tabBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         menuBtn = Ui.iconBtn(this, R.drawable.ic_more, Ui.TEXT2);
         menuBtn.setOnClickListener(v -> showMenu());
-        toolbar.addView(menuBtn, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        toolbar.addView(menuBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         buildFindBar();
 
@@ -483,9 +485,9 @@ public class MainActivity extends Activity {
         up.setOnClickListener(v -> { if (current != null) current.web.findNext(false); });
         down.setOnClickListener(v -> { if (current != null) current.web.findNext(true); });
         close.setOnClickListener(v -> hideFind());
-        findBar.addView(up, new LinearLayout.LayoutParams(dp(44), dp(48)));
-        findBar.addView(down, new LinearLayout.LayoutParams(dp(44), dp(48)));
-        findBar.addView(close, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        findBar.addView(up, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        findBar.addView(down, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        findBar.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
         findInput.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -558,6 +560,7 @@ public class MainActivity extends Activity {
     void closeTab(Tab t) {
         int i = tabs.indexOf(t);
         if (i < 0) return;
+        abortBlobs(t);
         tabs.remove(i);
         for (Tab o : tabs) if (o.parent == t) o.parent = null;
         if (t.web.getParent() != null) ((ViewGroup) t.web.getParent()).removeView(t.web);
@@ -664,71 +667,91 @@ public class MainActivity extends Activity {
         LWebView w = new LWebView(this);
         w.setOnScrollChangeListener((v, x, y, ox, oy) -> onWebScroll(v, y, oy));
         if (inc && incProfile()) {
-            try { WebViewCompat.setProfile(w, INC_PROFILE); } catch (Throwable e) { Log.w(TAG, "incognito profile", e); }
+            try { WebViewCompat.setProfile(w, INC_PROFILE); w.privateProfile = true; } catch (Throwable e) { Log.w(TAG, "incognito profile", e); }
         }
         return w;
     }
 
-    int scrollAcc;
-    void onWebScroll(View v, int y, int oy) {
-        if (current == null || current.web != v || !store.hideOnScroll() || customView != null) return;
-        if (findBar.getVisibility() == View.VISIBLE || toolbar.getAnimation() != null) return;
-        if (omni.hasFocus()) { setBarsHidden(false); return; }
-        int dy = y - oy;
-        if ((dy > 0) != (scrollAcc > 0)) scrollAcc = 0;
-        scrollAcc += dy;
-        if (y <= dp(8)) setBarsHidden(false);
-        else if (scrollAcc > dp(48)) setBarsHidden(true);
-        else if (scrollAcc < -dp(32)) setBarsHidden(false);
-    }
-
+    final ScrollBarGesture barGesture = new ScrollBarGesture();
     boolean barsHidden;
+    android.animation.ValueAnimator barAnimator;
+    int barGeneration;
+    long barScrollBlockedUntil;
     static final int BAR_ANIM_MS = 200;
 
-    /**
-     * Slides the address bar away / back. The page is moved with translation during the animation and the
-     * WebView is resized only once at the end (or start), so the content no longer jumps.
-     */
+    void onWebScroll(View v, int y, int oy) {
+        if (current == null || current.web != v || !store.hideOnScroll() || customView != null
+                || isInPictureInPictureMode() || findBar.getVisibility() == View.VISIBLE) return;
+        if (omni.hasFocus()) { setBarsHidden(false); return; }
+        long now = System.currentTimeMillis();
+        Boolean hide = barGesture.scroll(y, oy, barsHidden, lastTouch != 0 && now - lastTouch < 1500,
+                barAnimator != null || now < barScrollBlockedUntil, dp(8), dp(48), dp(32));
+        if (hide != null) setBarsHidden(hide);
+    }
+
+    /** Translate during motion; resize the WebView once, with layout-triggered scroll events ignored. */
     void setBarsHidden(boolean hide) {
-        if (barsHidden == hide && toolbar.getVisibility() == (hide ? View.GONE : View.VISIBLE)) return;
+        if (barsHidden == hide) return;
+        boolean wasGone = toolbar.getVisibility() == View.GONE;
+        int generation = ++barGeneration;
+        if (barAnimator != null) { barAnimator.cancel(); barAnimator = null; }
         barsHidden = hide;
-        scrollAcc = 0;
-        final boolean bottom = store.bottomBar();
-        final View[] bars = {toolbar, divider};
-        for (View v : bars) v.animate().cancel();
-        content.animate().cancel();
-        int h = toolbar.getHeight() + divider.getHeight();
-        if (h == 0 || !toolbar.isLaidOut()) { resetBars(hide); return; }
-        android.view.animation.Interpolator ip = new android.view.animation.DecelerateInterpolator(1.5f);
+        barGesture.reset();
+        boolean bottom = store.bottomBar();
+        int h = dp(56) + Math.max(1, dp(0.7f)); // getHeight() is zero after GONE
         float off = bottom ? h : -h;
-        if (hide) {
-            for (View v : bars) v.animate().translationY(off).setDuration(BAR_ANIM_MS).setInterpolator(ip).start();
-            if (!bottom) content.animate().translationY(-h).setDuration(BAR_ANIM_MS).setInterpolator(ip).start();
-            toolbar.animate().withEndAction(() -> { if (barsHidden) resetBars(true); });
-        } else {
+        if (wasGone) {
             toolbar.setVisibility(View.VISIBLE);
             divider.setVisibility(View.VISIBLE);
-            for (View v : bars) { v.setTranslationY(off); v.animate().translationY(0).setDuration(BAR_ANIM_MS).setInterpolator(ip).start(); }
-            if (!bottom) { content.setTranslationY(-h); content.animate().translationY(0).setDuration(BAR_ANIM_MS).setInterpolator(ip).start(); }
+            toolbar.setTranslationY(off);
+            divider.setTranslationY(off);
+            if (!bottom) content.setTranslationY(-h);
         }
+        float startBar = toolbar.getTranslationY(), startContent = content.getTranslationY();
+        float endBar = hide ? off : 0, endContent = hide && !bottom ? -h : 0;
+        barScrollBlockedUntil = System.currentTimeMillis() + BAR_ANIM_MS + 150;
+        android.animation.ValueAnimator anim = android.animation.ValueAnimator.ofFloat(0, 1);
+        barAnimator = anim;
+        anim.setDuration(BAR_ANIM_MS);
+        anim.setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f));
+        anim.addUpdateListener(value -> {
+            if (generation != barGeneration) return;
+            float f = (float) value.getAnimatedValue();
+            float translation = startBar + (endBar - startBar) * f;
+            toolbar.setTranslationY(translation); divider.setTranslationY(translation);
+            content.setTranslationY(startContent + (endContent - startContent) * f);
+        });
+        anim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                if (generation != barGeneration) return;
+                barAnimator = null;
+                finishBars(hide);
+            }
+        });
+        anim.start();
         placeFloating();
     }
 
-    /** Applies the final bar state at once (no animation). */
-    void resetBars(boolean hidden) {
+    void finishBars(boolean hidden) {
         barsHidden = hidden;
-        int vis = hidden ? View.GONE : View.VISIBLE;
-        toolbar.setVisibility(vis);
-        divider.setVisibility(vis);
-        toolbar.setTranslationY(0);
-        divider.setTranslationY(0);
-        content.setTranslationY(0);
+        toolbar.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        divider.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        toolbar.setTranslationY(0); divider.setTranslationY(0); content.setTranslationY(0);
+        barGesture.reset();
+        barScrollBlockedUntil = System.currentTimeMillis() + 150;
         placeFloating();
+    }
+
+    /** Cancels pending callbacks as well as transforms, e.g. when switching tabs or entering PiP. */
+    void resetBars(boolean hidden) {
+        ++barGeneration;
+        if (barAnimator != null) { barAnimator.cancel(); barAnimator = null; }
+        finishBars(hidden);
     }
 
     /** Height of the address bar when it sits at the bottom (floating buttons and messages go above it). */
     int bottomChrome() {
-        if (!store.bottomBar() || barsHidden || toolbar.getVisibility() != View.VISIBLE) return 0;
+        if (!store.bottomBar() || toolbar.getVisibility() != View.VISIBLE) return 0;
         return (toolbar.getHeight() > 0 ? toolbar.getHeight() : dp(56)) + Math.max(1, divider.getHeight());
     }
 
@@ -769,6 +792,7 @@ public class MainActivity extends Activity {
     void wipeIncognito() {
         if (!incProfile()) return;
         try {
+            if (ProfileStore.getInstance().deleteProfile(INC_PROFILE)) return;
             Profile p = ProfileStore.getInstance().getOrCreateProfile(INC_PROFILE);
             p.getCookieManager().removeAllCookies(null);
             p.getWebStorage().deleteAllData();
@@ -779,9 +803,11 @@ public class MainActivity extends Activity {
     void setupWeb(final Tab t) {
         final WebView w = t.web;
         WebSettings s = w.getSettings();
-        s.setJavaScriptEnabled(store.js());
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
+        boolean isolated = !t.incognito || ((LWebView) w).privateProfile;
+        s.setBlockNetworkLoads(!isolated);
+        s.setJavaScriptEnabled(isolated && store.js());
+        s.setDomStorageEnabled(isolated);
+        s.setDatabaseEnabled(isolated);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
         s.setBuiltInZoomControls(true);
@@ -797,9 +823,11 @@ public class MainActivity extends Activity {
         t.ua = s.getUserAgentString();
         applySiteSettings(s);
         if (t.incognito) { s.setCacheMode(WebSettings.LOAD_NO_CACHE); s.setSaveFormData(false); }
-        CookieManager cm = cookies(t.incognito);
-        cm.setAcceptCookie(true);
-        cm.setAcceptThirdPartyCookies(w, true);
+        if (isolated) {
+            CookieManager cm = cookies(t.incognito);
+            cm.setAcceptCookie(true);
+            cm.setAcceptThirdPartyCookies(w, true);
+        }
         w.setBackgroundColor(Color.WHITE);
         w.addJavascriptInterface(new Bridge(t), "LumenBridge");
         w.setWebViewClient(new Client(t));
@@ -850,28 +878,47 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void pwDone() { ui.post(() -> maybeOfferSave(t)); }
         @JavascriptInterface public void pwFocus(int isPass) { ui.post(() -> showPwBar(t)); }
         @JavascriptInterface public void pwBlur() { ui.post(() -> { ui.removeCallbacks(pwBlurR); ui.postDelayed(pwBlurR, 300); }); }
-        // Blob downloads arrive in chunks. Only a token issued by onDownload() (i.e. after the user / WebView
-        // started a download) is accepted, so pages cannot silently write files through the bridge.
-        @JavascriptInterface public boolean saveBegin(String token, String mime) {
-            BlobSave b = blobSaves.get(token);
+        // Tokens are issued only after confirmation and belong to this tab and document.
+        @JavascriptInterface public boolean saveBegin(String token, String mime, long size) {
+            BlobSave b = ownedBlob(token, t);
             if (b == null) return false;
-            try { b.saver = Saver.create(MainActivity.this, b.name, mimeFor(b.name, mime != null && !mime.isEmpty() ? mime : b.mime)); return true; }
-            catch (Exception e) { blobSaves.remove(token); ui.post(() -> toast(L.t("Не удалось сохранить: ") + e.getMessage())); return false; }
+            synchronized (b) {
+                try {
+                    b.quota.begin(size);
+                    b.saver = Saver.create(MainActivity.this, b.name, mimeFor(b.name, b.mime));
+                    b.touched = System.currentTimeMillis();
+                    return true;
+                } catch (Exception e) { abortBlob(token); return false; }
+            }
         }
-        @JavascriptInterface public void saveChunk(String token, String b64) {
-            BlobSave b = blobSaves.get(token);
-            if (b == null || b.saver == null || b.failed) return;
-            try { b.saver.out.write(Base64.decode(b64, Base64.DEFAULT)); }
-            catch (Exception e) { b.failed = true; }
+        @JavascriptInterface public boolean saveChunk(String token, String b64) {
+            BlobSave b = ownedBlob(token, t);
+            if (b == null) return false;
+            synchronized (b) {
+                try {
+                    if (b.saver == null || b64 == null || b64.length() > 1048576) throw new java.io.IOException("Invalid chunk");
+                    byte[] data = Base64.decode(b64, Base64.NO_WRAP);
+                    b.quota.add(data.length);
+                    b.saver.out.write(data);
+                    b.touched = System.currentTimeMillis();
+                    return true;
+                } catch (Exception e) { abortBlob(token); return false; }
+            }
         }
         @JavascriptInterface public void saveEnd(String token, int ok) {
-            BlobSave b = blobSaves.remove(token);
-            if (b == null || b.saver == null) return;
-            try {
-                if (ok != 1 || b.failed) throw new java.io.IOException(L.t("Ошибка чтения файла"));
-                b.saver.finish();
-                ui.post(() -> toast(L.t("Сохранено в Загрузки/Lasur: ") + b.saver.name));
-            } catch (Exception e) { b.saver.abort(); ui.post(() -> toast(L.t("Не удалось сохранить: ") + e.getMessage())); }
+            BlobSave b = ownedBlob(token, t);
+            if (b == null) return;
+            synchronized (b) {
+                if (!blobSaves.remove(token, b)) return;
+                try {
+                    if (ok != 1 || b.saver == null || !b.quota.complete()) throw new java.io.IOException(L.t("Ошибка чтения файла"));
+                    b.saver.finish();
+                    ui.post(() -> toast(L.t("Сохранено в Загрузки/Lasur: ") + b.saver.name));
+                } catch (Exception e) {
+                    if (b.saver != null) b.saver.abort();
+                    ui.post(() -> toast(L.t("Не удалось сохранить: ") + e.getMessage()));
+                }
+            }
         }
     }
 
@@ -891,6 +938,7 @@ public class MainActivity extends Activity {
         Client(Tab t) { this.t = t; }
 
         @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+            if (t.incognito && !((LWebView) t.web).privateProfile) return true;
             Uri u = r.getUrl();
             String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase();
             String url = u.toString();
@@ -933,6 +981,8 @@ public class MainActivity extends Activity {
         }
 
         @Override public void onPageStarted(WebView v, String url, Bitmap fav) {
+            abortBlobs(t);
+            if (t == current) resetBars(false);
             postStrip();
             if (t.pwPass != null) maybeOfferSave(t);
             if (t == current) hidePwBar();
@@ -1320,6 +1370,7 @@ public class MainActivity extends Activity {
         updateVideoFab();
         updateOmniButtons();
         updatePipParams();
+        if (isInPictureInPictureMode()) preparePip();
     }
 
     // ---------------------------------------------------------------- system bars (edge-to-edge, Android 15+ ready)
@@ -1690,8 +1741,8 @@ public class MainActivity extends Activity {
                 card.addView(a); card.addView(b);
             }
             col.addView(card, new LinearLayout.LayoutParams(MATCH, WRAP));
-            if (!incProfile()) {
-                TextView w = Ui.text(this, L.t("⚠ Ваша версия Android System WebView не умеет отделять cookies инкогнито: сайты, где вы вошли в обычных вкладках, узнают вас и здесь. Обновите Android System WebView в Google Play."), 13, 0xFFFDD663);
+            if (current != null && !((LWebView) current.web).privateProfile) {
+                TextView w = Ui.text(this, L.t("Инкогнито недоступно: обновите Android System WebView. Загрузка сайтов отключена, чтобы защитить данные обычных вкладок."), 13, 0xFFFDD663);
                 w.setPaddingRelative(dp(4), dp(16), dp(4), 0);
                 col.addView(w, new LinearLayout.LayoutParams(MATCH, WRAP));
             }
@@ -1702,7 +1753,7 @@ public class MainActivity extends Activity {
         topRow.setGravity(Gravity.END);
         ImageView pal = Ui.iconBtn(this, R.drawable.ic_palette, ntpOnWall ? Color.WHITE : Ui.TEXT2);
         pal.setOnClickListener(v -> showAppearance());
-        topRow.addView(pal, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        topRow.addView(pal, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout.LayoutParams trl = new LinearLayout.LayoutParams(MATCH, WRAP);
         trl.topMargin = -dp(32);
         col.addView(topRow, trl);
@@ -1987,7 +2038,7 @@ public class MainActivity extends Activity {
                     sw.addView(a, new FrameLayout.LayoutParams(MATCH, MATCH));
                 }
                 sw.setOnClickListener(v -> { color[0] = c; update[0].run(); });
-                LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(36), dp(36));
+                LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(48), dp(48));
                 sl.setMarginEnd(dp(10));
                 colors.addView(sw, sl);
             }
@@ -2658,7 +2709,7 @@ public class MainActivity extends Activity {
                     boolean up = UP_FOLDER.equals(row.folder);
                     ImageView fi = Ui.icon(MainActivity.this, up ? R.drawable.ic_back : R.drawable.ic_folder, Ui.TEXT2);
                     fi.setScaleType(ImageView.ScaleType.CENTER);
-                    r.addView(fi, new LinearLayout.LayoutParams(dp(36), dp(36)));
+                    r.addView(fi, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     int n = 0;
                     if (!up) for (Store.Item b : items) if (row.folder.equals(b.f)) n++;
                     LinearLayout tx = new LinearLayout(MainActivity.this);
@@ -2684,7 +2735,7 @@ public class MainActivity extends Activity {
                 if (!history) {
                     ImageView ed = Ui.iconBtn(MainActivity.this, R.drawable.ic_edit, Ui.TEXT2);
                     ed.setOnClickListener(v -> editBookmark(it, fill[0]));
-                    r.addView(ed, new LinearLayout.LayoutParams(dp(44), dp(44)));
+                    r.addView(ed, new LinearLayout.LayoutParams(dp(48), dp(48)));
                 }
                 ImageView del = Ui.iconBtn(MainActivity.this, R.drawable.ic_close, Ui.TEXT2);
                 del.setContentDescription(L.t("Удалить"));
@@ -2705,7 +2756,7 @@ public class MainActivity extends Activity {
                     ui.removeCallbacks(hideUndo);
                     ui.postDelayed(hideUndo, 5000);
                 });
-                r.addView(del, new LinearLayout.LayoutParams(dp(44), dp(44)));
+                r.addView(del, new LinearLayout.LayoutParams(dp(48), dp(48)));
                 r.setOnClickListener(v -> { dl[0].dismiss(); navigate(it.u); });
                 r.setOnLongClickListener(v -> { linkMenu(it.u, it.t, null); return true; });
                 return r;
@@ -2998,25 +3049,32 @@ public class MainActivity extends Activity {
         try { String pu = t.web.getUrl(); if (pu != null) t.pageHost = Uri.parse(pu).getHost(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         String name = fileName(url, cd, mime);
         if (url.startsWith("blob:")) {
-            withStorage(() -> {
-                String token = java.util.UUID.randomUUID().toString();
-                BlobSave bs = new BlobSave();
-                bs.name = name; bs.mime = mime;
-                blobSaves.put(token, bs);
-                String q = JSONObject.quote(token);
-                // Streams the blob in 768 KB slices instead of one huge data: URL (which ran out of memory).
-                String js = "(function(){var B=LumenBridge,T=" + q + ";fetch(" + JSONObject.quote(url) + ").then(function(r){return r.blob()}).then(function(b){"
-                        + "var CH=786432,o=0;function next(){if(o>=b.size){B.saveEnd(T,1);return}var f=new FileReader();"
-                        + "f.onload=function(){var s=f.result;B.saveChunk(T,s.substring(s.indexOf(',')+1));o+=CH;next()};"
-                        + "f.onerror=function(){B.saveEnd(T,0)};f.readAsDataURL(b.slice(o,o+CH))}"
-                        + "if(B.saveBegin(T,b.type||''))next()}).catch(function(){B.saveEnd(T,0)})})()";
-                t.web.evaluateJavascript(js, null);
-                toast(L.t("Сохранение файла…"));
-                ui.postDelayed(() -> { BlobSave left = blobSaves.get(token); if (left != null && left.saver == null) blobSaves.remove(token); }, 60000);
-            });
+            String origin = originOf(t.pageUrl);
+            dialog().setTitle(L.t("Скачать файл?"))
+                    .setMessage(name + "\n" + displayUrl(t.pageUrl))
+                    .setPositiveButton(L.t("Скачать"), (d, which) -> withStorage(() -> {
+                        if (!tabs.contains(t) || !origin.equals(originOf(t.pageUrl))) return;
+                        if (blobSaves.size() >= 3) { toast(L.t("Дождитесь завершения текущих загрузок")); return; }
+                        String token = java.util.UUID.randomUUID().toString();
+                        BlobSave bs = new BlobSave(t, origin, name, mime);
+                        blobSaves.put(token, bs);
+                        String q = JSONObject.quote(token);
+                        String js = "(function(){var B=LumenBridge,T=" + q + ";fetch(" + JSONObject.quote(url) + ").then(function(r){return r.blob()}).then(function(b){"
+                                + "var CH=786432,o=0;function next(){if(o>=b.size){B.saveEnd(T,1);return}var f=new FileReader();"
+                                + "f.onload=function(){var s=f.result;if(!B.saveChunk(T,s.substring(s.indexOf(',')+1))){B.saveEnd(T,0);return}o+=CH;next()};"
+                                + "f.onerror=function(){B.saveEnd(T,0)};f.readAsDataURL(b.slice(o,o+CH))}"
+                                + "if(B.saveBegin(T,b.type||'',b.size))next();else B.saveEnd(T,0)}).catch(function(){B.saveEnd(T,0)})})()";
+                        t.web.evaluateJavascript(js, null);
+                        ui.postDelayed(() -> expireBlob(token), 120000);
+                    })).setNegativeButton(L.t("Отмена"), null).show();
             return;
         }
-        if (url.startsWith("data:")) { withStorage(() -> BG.execute(() -> saveDataUrl(url, name, mime))); return; }
+        if (url.startsWith("data:")) {
+            dialog().setTitle(L.t("Скачать файл?")).setMessage(name)
+                    .setPositiveButton(L.t("Скачать"), (d, which) -> withStorage(() -> BG.execute(() -> saveDataUrl(url, name, mime))))
+                    .setNegativeButton(L.t("Отмена"), null).show();
+            return;
+        }
         boolean video = (mime != null && mime.startsWith("video/")) || isVideoUrl(url);
         if (video) {
             final Tab.Video v = new Tab.Video(url, t.web.getUrl(), name);
@@ -3032,7 +3090,41 @@ public class MainActivity extends Activity {
         confirmDownload(url, name, mime, t.web.getUrl(), ua, len);
     }
 
-    static final class BlobSave { String name, mime; Saver saver; volatile boolean failed; }
+    static final class BlobSave {
+        final Tab owner; final String origin, name, mime;
+        final BlobQuota quota = new BlobQuota();
+        Saver saver; volatile long touched = System.currentTimeMillis();
+        BlobSave(Tab owner, String origin, String name, String mime) {
+            this.owner = owner; this.origin = origin; this.name = name; this.mime = mime;
+        }
+    }
+
+    BlobSave ownedBlob(String token, Tab t) {
+        BlobSave b = blobSaves.get(token);
+        if (b == null || b.owner != t) return null;
+        if (!b.origin.equals(originOf(t.pageUrl)) || System.currentTimeMillis() - b.touched >= 120000) {
+            abortBlob(token); return null;
+        }
+        return b;
+    }
+
+    void abortBlob(String token) {
+        BlobSave b = blobSaves.remove(token);
+        if (b != null) synchronized (b) { if (b.saver != null) b.saver.abort(); }
+    }
+
+    void expireBlob(String token) {
+        BlobSave b = blobSaves.get(token);
+        if (b == null) return;
+        long remaining = 120000 - (System.currentTimeMillis() - b.touched);
+        if (remaining <= 0) abortBlob(token);
+        else ui.postDelayed(() -> expireBlob(token), remaining);
+    }
+
+    void abortBlobs(Tab owner) {
+        for (java.util.Map.Entry<String, BlobSave> e : blobSaves.entrySet())
+            if (owner == null || e.getValue().owner == owner) abortBlob(e.getKey());
+    }
     final java.util.concurrent.ConcurrentHashMap<String, BlobSave> blobSaves = new java.util.concurrent.ConcurrentHashMap<>();
 
     void confirmDownload(String url, String name, String mime, String referer, String ua, long len) {
@@ -3502,6 +3594,7 @@ public class MainActivity extends Activity {
         if (backBtn == null) return;
         boolean show = current != null && !current.ntp && !omni.hasFocus() && current.web.canGoBack();
         backBtn.setVisibility(show ? View.VISIBLE : View.GONE);
+        homeBtn.setVisibility(show ? View.GONE : View.VISIBLE);
     }
 
     void updateSuggestions(String q) {
@@ -3581,7 +3674,7 @@ public class MainActivity extends Activity {
             ImageView ins = Ui.iconBtn(this, R.drawable.ic_up, inc ? Ui.INC_TEXT2 : Ui.TEXT2);
             ins.setRotation(-45);
             ins.setOnClickListener(v -> { omni.setText(title + " "); omni.setSelection(omni.getText().length()); });
-            r.addView(ins, new LinearLayout.LayoutParams(dp(44), dp(44)));
+            r.addView(ins, new LinearLayout.LayoutParams(dp(48), dp(48)));
         }
         if (target == null) r.setOnClickListener(v -> { copy(current.web.getUrl()); unfocusOmni(); });
         else r.setOnClickListener(v -> navigate(target));
@@ -3670,7 +3763,7 @@ public class MainActivity extends Activity {
                 ic.setBackground(Ui.round(Ui.TONAL, 12));
                 int res = mime != null && mime.startsWith("video") ? R.drawable.ic_video : mime != null && mime.startsWith("image") ? R.drawable.ic_wallpaper : R.drawable.ic_download;
                 ic.addView(Ui.icon(this, res, Ui.ON_TONAL), new FrameLayout.LayoutParams(MATCH, MATCH));
-                r.addView(ic, new LinearLayout.LayoutParams(dp(44), dp(44)));
+                r.addView(ic, new LinearLayout.LayoutParams(dp(48), dp(48)));
                 LinearLayout tx = new LinearLayout(this);
                 tx.setOrientation(LinearLayout.VERTICAL);
                 tx.setPaddingRelative(dp(14), 0, dp(6), 0);
@@ -3766,7 +3859,7 @@ public class MainActivity extends Activity {
             }
             sw.setContentDescription(L.t(Ui.ACCENT_NAMES[i]));
             sw.setOnClickListener(v -> { if (Ui.accent != a) { d[0].dismiss(); applyTheme(Ui.mode, a); } });
-            LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(44), dp(44));
+            LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(48), dp(48));
             sl.setMarginEnd(dp(12));
             acc.addView(sw, sl);
         }
@@ -3909,7 +4002,11 @@ public class MainActivity extends Activity {
                 }).show());
         switchRow(box, L.t("Поисковые подсказки"), L.t("Подсказки поисковика при вводе запроса"), store.bool("suggest", true), v -> store.setBool("suggest", v));
         switchRow(box, L.t("Потянуть вниз для обновления"), L.t("Обновлять страницу жестом сверху вниз"), store.bool("ptr", true), v -> store.setBool("ptr", v));
-        switchRow(box, L.t("Картинка в картинке"), L.t("Видео на весь экран продолжает играть в окне при выходе"), store.bool("pip", true), v -> store.setBool("pip", v));
+        switchRow(box, L.t("Картинка в картинке"), L.t("Видео на весь экран продолжает играть в окне при выходе"), store.bool("pip", true), v -> {
+            store.setBool("pip", v);
+            if (current != null) current.web.evaluateJavascript(Scripts.R("window.__lasurKeep=" + v + ";"), null);
+            updatePipParams();
+        });
         switchRow(box, L.t("Восстанавливать вкладки"), L.t("Открывать прошлые вкладки при запуске"), store.restoreTabs(), v -> store.setBool("restore", v));
         if (Math.round(scrWpx() / Ui.density) >= 600)
             switchRow(box, L.t("Панель вкладок"), L.t("Вкладки над адресной строкой на большом экране"), store.bool("tabStrip", true), v -> { store.setBool("tabStrip", v); refreshStrip(); refreshChrome(); });
@@ -3939,7 +4036,7 @@ public class MainActivity extends Activity {
             });
         section(box, L.t("Сайты"));
         switchRow(box, "JavaScript", L.t("Нужен для работы большинства сайтов"), store.js(), v -> {
-            store.setBool("js", v); for (Tab t : tabs) t.web.getSettings().setJavaScriptEnabled(v);
+            store.setBool("js", v); for (Tab t : tabs) t.web.getSettings().setJavaScriptEnabled(v && (!t.incognito || ((LWebView) t.web).privateProfile));
         });
         switchRow(box, L.t("Версия для ПК по умолчанию"), L.t("Для новых вкладок"), store.desktopDefault(), v -> store.setBool("desktop", v));
         actionRow(box, L.t("Разрешения сайтов"), L.t("Микрофон, камера, местоположение, новые вкладки"), this::showSitePermissions);
@@ -4398,7 +4495,7 @@ public class MainActivity extends Activity {
         ImageView eye = Ui.iconBtn(this, R.drawable.ic_eye, Ui.TEXT2);
         final boolean[] shown = {false};
         eye.setOnClickListener(v -> { shown[0] = !shown[0]; pt.setText(shown[0] ? pass : mask(pass)); });
-        pr.addView(eye, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        pr.addView(eye, new LinearLayout.LayoutParams(dp(48), dp(48)));
         box.addView(pr);
         LinearLayout btns = new LinearLayout(this);
         btns.setGravity(Gravity.CENTER_VERTICAL);
@@ -4427,7 +4524,7 @@ public class MainActivity extends Activity {
 
     void showPwBar(Tab t) {
         ui.removeCallbacks(pwBlurR);
-        if (t != current || !store.bool("pwFill", true) || t.ntp) return;
+        if (t != current || !store.bool("pwFill", true) || t.ntp || security(t) != 1) return;
         String site = Passwords.site(t.web.getUrl());
         ArrayList<Passwords.Cred> cs = passwords.forSite(site);
         if (cs.isEmpty()) { hidePwBar(); return; }
@@ -4459,7 +4556,7 @@ public class MainActivity extends Activity {
         pwBar.addView(hs, new LinearLayout.LayoutParams(0, MATCH, 1));
         ImageView mg = Ui.iconBtn(this, R.drawable.ic_settings, Ui.TEXT2);
         mg.setOnClickListener(v -> showPasswords());
-        pwBar.addView(mg, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        pwBar.addView(mg, new LinearLayout.LayoutParams(dp(48), dp(48)));
         ImageView cl = Ui.iconBtn(this, R.drawable.ic_close, Ui.TEXT2);
         cl.setOnClickListener(v -> hidePwBar());
         pwBar.addView(cl, new LinearLayout.LayoutParams(dp(40), dp(44)));
@@ -4470,6 +4567,7 @@ public class MainActivity extends Activity {
     void hidePwBar() { if (pwBar != null) pwBar.setVisibility(View.GONE); }
 
     void fillCred(Tab t, Passwords.Cred c) {
+        if (security(t) != 1) { hidePwBar(); toast(L.t("Пароли доступны только при защищённом подключении")); return; }
         String site = Passwords.site(t.web.getUrl());
         if (site == null || !site.equals(c.site)) { hidePwBar(); return; }
         String p = passwords.pass(c);
@@ -4479,6 +4577,7 @@ public class MainActivity extends Activity {
     }
 
     void autoFill(Tab t) {
+        if (security(t) != 1) return;
         if (!store.bool("pwFill", true) || !store.bool("pwAuto", false)) return;
         String site = Passwords.site(t.web.getUrl());
         ArrayList<Passwords.Cred> cs = passwords.forSite(site);
@@ -4958,13 +5057,24 @@ public class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         return checkSelfPermission(kindPerms(k)[0]) == PackageManager.PERMISSION_GRANTED;
     }
-    int siteDecision(String host, String k) { return host == null ? 0 : store.p.getInt("sp_" + k + "_" + host, 0); }
+    int siteDecision(Tab t, String host, String k) {
+        if (host == null) return 0;
+        String key = "sp_" + k + "_" + host;
+        return t.incognito ? t.privatePermissions.getOrDefault(key, 0) : store.p.getInt(key, 0);
+    }
+
+    void rememberPermission(Tab t, String host, String k, int decision) {
+        if (host == null) return;
+        String key = "sp_" + k + "_" + host;
+        if (t.incognito) t.privatePermissions.put(key, decision);
+        else store.p.edit().putInt(key, decision).apply();
+    }
 
     /** Asks the user (once per site, remembered) and then Android itself, if needed. */
     void sitePermission(Tab t, String host, ArrayList<String> kinds, java.util.function.Consumer<ArrayList<String>> result) {
         ArrayList<String> allowed = new ArrayList<>(), ask = new ArrayList<>();
         for (String k : kinds) {
-            int dcs = siteDecision(host, k);
+            int dcs = siteDecision(t, host, k);
             if (dcs == 1) allowed.add(k); else if (dcs == 0) ask.add(k);
         }
         Runnable finish = () -> {
@@ -4999,13 +5109,13 @@ public class MainActivity extends Activity {
         d.setOnDismissListener(x -> { if (permDialog == d) permDialog = null; if (!answered[0]) { answered[0] = true; finish.run(); } });
         b[0].setOnClickListener(v -> {
             answered[0] = true;
-            if (!t.incognito && host != null) for (String k : ask) store.p.edit().putInt("sp_" + k + "_" + host, 2).apply();
+            for (String k : ask) rememberPermission(t, host, k, 2);
             d.dismiss();
             finish.run();
         });
         b[1].setOnClickListener(v -> {
             answered[0] = true;
-            if (!t.incognito && host != null) for (String k : ask) store.p.edit().putInt("sp_" + k + "_" + host, 1).apply();
+            for (String k : ask) rememberPermission(t, host, k, 1);
             allowed.addAll(ask);
             d.dismiss();
             finish.run();
@@ -5373,7 +5483,7 @@ public class MainActivity extends Activity {
         i.setScaleType(ImageView.ScaleType.FIT_CENTER);
         i.setPaddingRelative(dp(11), dp(11), dp(11), dp(11));
         b.addView(i, new FrameLayout.LayoutParams(MATCH, MATCH));
-        r.addView(b, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        r.addView(b, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
         tx.setPaddingRelative(dp(14), 0, 0, 0);
@@ -5436,7 +5546,7 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- picture-in-picture
-    boolean pipExited;
+    boolean pipExited, pipClosed, activityVisible;
 
 
     static final String ACTION_PIP_TOGGLE = "com.lumen.browser.PIP_TOGGLE";
@@ -5445,7 +5555,7 @@ public class MainActivity extends Activity {
     void registerPipReceiver() {
         pipReceiver = new android.content.BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
-                if (current == null) return;
+                if (current == null || !isInPictureInPictureMode()) return;
                 current.mediaPlaying = !current.mediaPlaying; // optimistic icon flip, page reports the real state
                 updatePipParams();
                 current.web.evaluateJavascript(PIP_TOGGLE_JS, null);
@@ -5459,7 +5569,7 @@ public class MainActivity extends Activity {
     }
 
     boolean pipEligible() {
-        return store.bool("pip", true) && current != null && !current.ntp && switcher.getVisibility() != View.VISIBLE
+        return !leavingByBack && !pipClosed && store.bool("pip", true) && current != null && !current.ntp && switcher.getVisibility() != View.VISIBLE
                 && (customView != null || current.mediaPlaying);
     }
 
@@ -5492,6 +5602,7 @@ public class MainActivity extends Activity {
     }
 
     void preparePip() {
+        resetBars(true);
         if (current != null) current.web.evaluateJavascript(customView == null ? PIP_ON_JS : PIP_FS_JS, null);
         toolbar.setVisibility(View.GONE);
         stripHidden = true;
@@ -5515,6 +5626,12 @@ public class MainActivity extends Activity {
     @Override protected void onUserLeaveHint() {
         super.onUserLeaveHint();
         if (leavingByBack) return;
+        // Android 12+ performs auto-entry; manual entry here races that transition.
+        if (Build.VERSION.SDK_INT >= 31) {
+            updatePipParams();
+            if (pipEligible()) current.web.evaluateJavascript(customView == null ? PIP_ON_JS : PIP_FS_JS, null);
+            return;
+        }
         if (Build.VERSION.SDK_INT >= 26 && pipEligible() && !isInPictureInPictureMode()) {
             preparePip();
             try { if (!enterPictureInPictureMode(pipParams())) restorePip(); } catch (Exception e) { restorePip(); }
@@ -5523,23 +5640,35 @@ public class MainActivity extends Activity {
 
     @Override public void onPictureInPictureModeChanged(boolean in, android.content.res.Configuration c) {
         super.onPictureInPictureModeChanged(in, c);
-        if (in) { pipExited = false; preparePip(); }
-        else { pipExited = true; restorePip(); }
+        if (in) { pipExited = false; pipClosed = false; preparePip(); }
+        else {
+            pipExited = true; pipClosed = !activityVisible; restorePip();
+            // Expanding PiP resumes the Activity; closing it leaves the Activity stopped.
+            ui.postDelayed(() -> { if (!activityVisible && !isInPictureInPictureMode()) stopBackgroundMedia(); }, 250);
+        }
         applyInsets();
     }
 
-    @Override protected void onResume() { super.onResume(); pipExited = false; leavingByBack = false; updatePipParams(); }
+    @Override protected void onResume() {
+        super.onResume(); activityVisible = true; pipExited = false; pipClosed = false;
+        leavingByBack = false; updatePipParams();
+    }
+
+    void stopBackgroundMedia() {
+        if (current == null || current.web == null) return;
+        current.mediaPlaying = false;
+        // Turn off transition recovery before pausing; otherwise the pause handler resumes the video.
+        try { current.web.evaluateJavascript(PIP_OFF_JS + PAUSE_JS, null); } catch (Exception e) { Log.d(TAG, "stop media", e); }
+        updatePipParams();
+    }
 
     @Override protected void onStop() {
         super.onStop();
-        if (pipExited && current != null) { try { current.web.evaluateJavascript(PAUSE_JS, null); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); } }
+        if (isInPictureInPictureMode()) return;
+        stopBackgroundMedia();
         pipExited = false;
-        // Stop JavaScript timers / layout of all pages in background (battery), unless a video keeps
-        // playing in picture-in-picture or background playback.
-        boolean keep = (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode())
-                || (current != null && current.mediaPlaying && store.bool("pip", true));
-        if (!keep && current != null) {
-            try { current.web.onPause(); current.web.pauseTimers(); timersPaused = true; } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        if (current != null && current.web != null) {
+            try { current.web.onPause(); current.web.pauseTimers(); timersPaused = true; } catch (Exception e) { Log.d(TAG, "pause timers", e); }
         }
     }
 

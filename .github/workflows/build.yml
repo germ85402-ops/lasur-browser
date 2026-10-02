@@ -41,6 +41,9 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
 
+      - name: PiP script behavior checks
+        run: node scripts/test-pip.mjs
+
       - name: Unit tests
         run: gradle testDebugUnitTest --no-daemon --stacktrace
 
