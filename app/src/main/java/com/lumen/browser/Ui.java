@@ -15,13 +15,18 @@ final class Ui {
     static float density;
     static boolean dark;
     static int BG, SURFACE, TOOLBAR, PILL, TEXT, TEXT2, ACCENT, DIVIDER, SWITCHER_BG;
-    static final int INC_TOOLBAR = 0xFF202124, INC_PILL = 0xFF3C4043, INC_TEXT = 0xFFE8EAED, INC_TEXT2 = 0xFF9AA0A6, INC_BG = 0xFF202124;
+    static final int INC_TOOLBAR = 0xFF202124, INC_PILL = 0xFF3C4043, INC_TEXT = 0xFFE8EAED, INC_TEXT2 = 0xFF9AA0A6, INC_BG = 0xFF202124,
+            INC_SURFACE = 0xFF35363A, INC_DIVIDER = 0xFF3C4043;
+    /** Chips/tiles, secondary chips, snackbar, pull-to-refresh indicator. */
+    static int CHIP, CHIP2, SNACK, PTR;
 
     static final String[] ACCENT_NAMES = {"Синий", "Зелёный", "Фиолетовый", "Розовый", "Оранжевый", "Бирюзовый", "Красный"};
     static final int[] ACCENT_LIGHT = {0xFF1A73E8, 0xFF188038, 0xFF8430CE, 0xFFD01884, 0xFFE8710A, 0xFF007B83, 0xFFD93025};
     static final int[] ACCENT_DARK = {0xFF8AB4F8, 0xFF81C995, 0xFFC58AF9, 0xFFFF8BCB, 0xFFFCAD70, 0xFF78D9EC, 0xFFF28B82};
     static final String[] MODE_NAMES = {"Как в системе", "Светлая", "Тёмная", "Чёрная (AMOLED)"};
     static int TONAL, ON_TONAL, CARD, mode, accent;
+    /** Popup menus and dialogs, search pill on the home page, disabled icons, error/warning colors. */
+    static int MENU_SURFACE, NTP_PILL, DISABLED, ERROR, WARN;
     static boolean amoled;
 
     static boolean resolveDark(Context c, int mode) {
@@ -48,11 +53,17 @@ final class Ui {
             TEXT = 0xFFE8EAED; TEXT2 = 0xFF9AA0A6; ACCENT = ACCENT_DARK[accent]; DIVIDER = amoled ? 0xFF262626 : 0xFF3C4043; SWITCHER_BG = BG;
             CARD = amoled ? 0xFF121212 : 0xFF292A2D;
             TONAL = blend(ACCENT, BG, 0.68f); ON_TONAL = blend(ACCENT, 0xFFFFFFFF, 0.55f);
+            MENU_SURFACE = amoled ? 0xFF161616 : 0xFF2D2E31; NTP_PILL = amoled ? 0xFF1F1F1F : 0xFF303134;
+            DISABLED = 0xFF5F6368; ERROR = 0xFFF28B82; WARN = 0xFFFDD663;
+            CHIP = amoled ? 0xFF262626 : 0xFF3C4043; CHIP2 = amoled ? 0xFF1F1F1F : 0xFF303134; SNACK = 0xFFE8EAED; PTR = 0xFF3C4043;
         } else {
             BG = 0xFFFFFFFF; SURFACE = 0xFFFFFFFF; TOOLBAR = 0xFFFFFFFF; PILL = 0xFFF1F3F4;
             TEXT = 0xFF202124; TEXT2 = 0xFF5F6368; ACCENT = ACCENT_LIGHT[accent]; DIVIDER = 0xFFE0E0E0; SWITCHER_BG = 0xFFF1F3F4;
             CARD = 0xFFF8F9FA;
             TONAL = blend(ACCENT, 0xFFFFFFFF, 0.82f); ON_TONAL = blend(ACCENT, 0xFF000000, 0.55f);
+            MENU_SURFACE = 0xFFFFFFFF; NTP_PILL = 0xFFFFFFFF;
+            DISABLED = 0xFFBDC1C6; ERROR = 0xFFD93025; WARN = 0xFFB06000;
+            CHIP = 0xFFF1F3F4; CHIP2 = 0xFFF1F3F4; SNACK = 0xFF303134; PTR = 0xFFFFFFFF;
         }
     }
 
@@ -96,7 +107,56 @@ final class Ui {
         ImageView iv = icon(c, res, tint);
         iv.setBackground(ripple(c, true));
         iv.setClickable(true);
+        iv.setFocusable(true);
+        describe(iv, label(res));
         return iv;
+    }
+
+    /** Spoken label (TalkBack) and long-press tooltip for an icon-only button. */
+    static void describe(android.view.View v, String text) {
+        if (text == null) return;
+        v.setContentDescription(text);
+        if (android.os.Build.VERSION.SDK_INT >= 26) v.setTooltipText(text);
+    }
+
+    /** Default accessibility label for an icon. */
+    static String label(int res) {
+        if (res == R.drawable.ic_home) return L.t("Главная страница");
+        if (res == R.drawable.ic_back) return L.t("Назад");
+        if (res == R.drawable.ic_forward) return L.t("Вперёд");
+        if (res == R.drawable.ic_more) return L.t("Меню");
+        if (res == R.drawable.ic_close) return L.t("Закрыть");
+        if (res == R.drawable.ic_mic) return L.t("Голосовой поиск");
+        if (res == R.drawable.ic_search) return L.t("Поиск");
+        if (res == R.drawable.ic_up) return L.t("Предыдущее совпадение");
+        if (res == R.drawable.ic_down) return L.t("Следующее совпадение");
+        if (res == R.drawable.ic_edit) return L.t("Изменить");
+        if (res == R.drawable.ic_star) return L.t("Удалить закладку");
+        if (res == R.drawable.ic_star_border) return L.t("Добавить в закладки");
+        if (res == R.drawable.ic_download) return L.t("Скачать");
+        if (res == R.drawable.ic_info) return L.t("Информация о сайте");
+        if (res == R.drawable.ic_refresh) return L.t("Обновить");
+        if (res == R.drawable.ic_settings) return L.t("Настройки");
+        if (res == R.drawable.ic_palette) return L.t("Темы и обои");
+        if (res == R.drawable.ic_copy) return L.t("Вставить из буфера обмена");
+        if (res == R.drawable.ic_share) return L.t("Поделиться");
+        if (res == R.drawable.ic_add) return L.t("Добавить");
+        if (res == R.drawable.ic_bookmarks) return L.t("Закладки");
+        if (res == R.drawable.ic_history) return L.t("История");
+        if (res == R.drawable.ic_key) return L.t("Пароли");
+        if (res == R.drawable.ic_lock) return L.t("Подключение защищено");
+        if (res == R.drawable.ic_incognito) return L.t("Инкогнито");
+        if (res == R.drawable.ic_desktop) return L.t("Версия для ПК");
+        if (res == R.drawable.ic_shield) return L.t("Блокировка рекламы");
+        if (res == R.drawable.ic_video) return L.t("Видео");
+        if (res == R.drawable.ic_translate) return L.t("Перевести страницу");
+        if (res == R.drawable.ic_eye) return L.t("Показать");
+        if (res == R.drawable.ic_check) return L.t("Готово");
+        if (res == R.drawable.ic_fullscreen_exit) return L.t("Выйти из полноэкранного режима");
+        if (res == R.drawable.ic_play) return L.t("Воспроизвести");
+        if (res == R.drawable.ic_wallpaper) return L.t("Обои");
+        if (res == R.drawable.ic_globe) return L.t("Сайт");
+        return null;
     }
 
     static void tint(ImageView iv, int color) { iv.setImageTintList(ColorStateList.valueOf(color)); }

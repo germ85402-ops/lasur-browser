@@ -28,5 +28,10 @@ final class Tab {
     boolean silenced;
     boolean held, asked, popupGesture; // popup window waiting for the user's confirmation
     Tab opener;
-    boolean mediaPlaying; int mediaW, mediaH; // largest playing video (for picture-in-picture)            // web view paused because the home page covers it
+    boolean mediaPlaying; int mediaW, mediaH; // largest playing video (for picture-in-picture)
+    android.os.Bundle pendingState; // saved back/forward history, restored when the tab is shown
+    long lastUsed;                  // for unloading the least recently used background tabs
+    final java.util.Set<String> sslHosts = java.util.concurrent.ConcurrentHashMap.newKeySet(); // hosts whose bad certificate the user accepted
+    volatile boolean mixed;         // https page loaded insecure (http) sub-resources
+    String injectedFor;             // url the page scripts were injected for (avoid re-injecting every progress tick)
 }

@@ -36,10 +36,14 @@ final class Passwords {
                 JSONObject o = a.getJSONObject(i);
                 list.add(new Cred(o.getString("s"), o.optString("u"), o.getString("p"), o.optLong("t")));
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
-    /** Normalized site key: host without "www." / "m." (and port, if any). */
+    /**
+     * Normalized site key: host without "www." / "m." (and port, if any).
+     * HTTPS sites use the bare host (compatible with older saved entries); plain-HTTP sites get an
+     * "http://" prefix so a password saved on a secure page is never offered on an insecure one.
+     */
     static String site(String url) {
         try {
             Uri u = Uri.parse(url);
@@ -50,7 +54,8 @@ final class Passwords {
             h = h.toLowerCase();
             if (h.startsWith("www.")) h = h.substring(4);
             else if (h.startsWith("m.")) h = h.substring(2);
-            return u.getPort() > 0 ? h + ":" + u.getPort() : h;
+            String k = u.getPort() > 0 ? h + ":" + u.getPort() : h;
+            return "http".equals(s) ? "http://" + k : k;
         } catch (Exception e) { return null; }
     }
 
@@ -81,7 +86,7 @@ final class Passwords {
         JSONArray a = new JSONArray();
         try {
             for (Cred c : list) a.put(new JSONObject().put("s", c.site).put("u", c.user).put("p", c.enc).put("t", c.time));
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         p.edit().putString("pw", a.toString()).apply();
     }
 
@@ -90,6 +95,9 @@ final class Passwords {
     void clearNever() { p.edit().remove("pwNever").apply(); }
 
     String pass(Cred c) { return decrypt(c.enc); }
+
+    /** Label for UI: the site key without the internal "http://" marker, but with a warning sign. */
+    static String label(String site) { return site != null && site.startsWith("http://") ? "⚠ " + site : site; }
 
     // ---------------------------------------------------------------- crypto
     private static SecretKey key() throws Exception {

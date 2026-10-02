@@ -31,16 +31,30 @@ final class AdBlocker {
     static final String BASE_CSS_SELECTORS = ".adsbygoogle,ins.adsbygoogle,[id^=\"google_ads\"],[id^=\"div-gpt-ad\"],[data-ad-slot],[id^=\"yandex_rtb\"],"
             + "[id^=\"adfox\"],.taboola,[id^=\"taboola\"],.OUTBRAIN,iframe[src*=\"doubleclick.net\"],iframe[src*=\"googlesyndication\"]";
 
+    // request types ($script, $image, …); 0 in Rule.types means "any type"
+    static final int T_SCRIPT = 1, T_IMAGE = 2, T_CSS = 4, T_XHR = 8, T_FRAME = 16, T_MEDIA = 32, T_FONT = 64,
+            T_OBJECT = 128, T_PING = 256, T_WS = 512, T_OTHER = 1024, T_ALL = 2047;
+
     static final class Rule {
         String pat; boolean hostAnchor, startAnchor, endAnchor;
         int party; // 0 any, 1 third-party only, 2 first-party only
         String[] inc, exc;
+        int types;          // allowed request types, 0 = all
+        boolean important;  // $important: wins over exception rules
+        java.util.regex.Pattern re; // /regex/ rules
+
+        /** Identity used by $badfilter. */
+        String key() {
+            return (re != null ? "/" + re.pattern() + "/" : pat) + "|" + hostAnchor + startAnchor + endAnchor + "|" + party + "|" + types + "|"
+                    + (inc == null ? "" : String.join("|", inc)) + "|" + (exc == null ? "" : String.join("|", exc));
+        }
     }
 
     static final class Engine {
         final HashSet<String> hosts = new HashSet<>(200000), allowHosts = new HashSet<>(), docAllow = new HashSet<>(), noGenericHide = new HashSet<>();
         final HashMap<String, ArrayList<Rule>> block = new HashMap<>(), allow = new HashMap<>();
         final ArrayList<Rule> blockAny = new ArrayList<>(), allowAny = new ArrayList<>();
+        final ArrayList<String> badfilters = new ArrayList<>();
         final ArrayList<String> generic = new ArrayList<>();
         final HashSet<String> genericExc = new HashSet<>();
         final HashMap<String, ArrayList<String>> domainCss = new HashMap<>();
@@ -60,7 +74,9 @@ final class AdBlocker {
         if (started) return;
         started = true;
         final Context app = c.getApplicationContext();
-        new Thread(() -> reload(app), "adblock-load").start();
+        Thread th = new Thread(() -> reload(app), "adblock-load");
+        th.setPriority(Thread.NORM_PRIORITY - 1);
+        th.start();
     }
 
     static int size() { Engine e = eng; return e.hosts.size() + e.netRules + e.cssRules; }
@@ -73,13 +89,103 @@ final class AdBlocker {
                 File f = new File(c.getFilesDir(), l[0].replace('/', '_'));
                 InputStream in = f.exists() && f.length() > 10000 ? new FileInputStream(f) : c.getAssets().open(l[0]);
                 parse(in, e, l[0].equals("hosts.txt"));
-            } catch (Exception ignored) { }
+            } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         }
-        try { parse(c.getAssets().open("extra_hosts.txt"), e, true); } catch (Exception ignored) { }
+        try { parse(c.getAssets().open("extra_hosts.txt"), e, true); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
+        applyBadfilters(e);
+        Psl.init(c);
         e.generic.removeAll(e.genericExc);
         e.genericCss = buildCss(e.generic, null);
         eng = e;
         synchronized (cssCache) { cssCache.evictAll(); }
+    }
+
+    /** Removes the rules disabled by "$badfilter" entries. */
+    static void applyBadfilters(Engine e) {
+        if (e.badfilters.isEmpty()) return;
+        HashSet<String> keys = new HashSet<>();
+        for (String bf : e.badfilters) {
+            Engine tmp = new Engine();
+            try { parseFilter(bf, tmp); } catch (Exception ignored) { continue; }
+            e.hosts.removeAll(tmp.hosts);
+            e.allowHosts.removeAll(tmp.allowHosts);
+            for (ArrayList<Rule> l : tmp.block.values()) for (Rule r : l) keys.add(r.key());
+            for (ArrayList<Rule> l : tmp.allow.values()) for (Rule r : l) keys.add(r.key());
+            for (Rule r : tmp.blockAny) keys.add(r.key());
+            for (Rule r : tmp.allowAny) keys.add(r.key());
+        }
+        if (keys.isEmpty()) return;
+        for (ArrayList<Rule> l : e.block.values()) l.removeIf(r -> keys.contains(r.key()));
+        for (ArrayList<Rule> l : e.allow.values()) l.removeIf(r -> keys.contains(r.key()));
+        e.blockAny.removeIf(r -> keys.contains(r.key()));
+        e.allowAny.removeIf(r -> keys.contains(r.key()));
+    }
+
+    static int typeBit(String o) {
+        switch (o) {
+            case "script": return T_SCRIPT;
+            case "image": return T_IMAGE;
+            case "stylesheet": case "css": return T_CSS;
+            case "xmlhttprequest": case "xhr": return T_XHR;
+            case "subdocument": case "frame": return T_FRAME;
+            case "media": return T_MEDIA;
+            case "font": return T_FONT;
+            case "object": case "object-subrequest": return T_OBJECT;
+            case "ping": case "beacon": return T_PING;
+            case "websocket": return T_WS;
+            case "other": return T_OTHER;
+            case "all": return T_ALL;
+            default: return 0;
+        }
+    }
+
+    /** Best guess of the request type from fetch metadata, the Accept header and the file extension. */
+    static int typeOf(android.webkit.WebResourceRequest r) {
+        java.util.Map<String, String> h = r.getRequestHeaders();
+        String dest = null, accept = null;
+        if (h != null) for (java.util.Map.Entry<String, String> e : h.entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().toLowerCase();
+            if (k.equals("sec-fetch-dest")) dest = e.getValue();
+            else if (k.equals("accept")) accept = e.getValue();
+        }
+        if (dest != null) {
+            switch (dest) {
+                case "script": case "worker": case "sharedworker": case "serviceworker": return T_SCRIPT;
+                case "image": return T_IMAGE;
+                case "style": return T_CSS;
+                case "iframe": case "frame": case "document": return T_FRAME;
+                case "audio": case "video": case "track": return T_MEDIA;
+                case "font": return T_FONT;
+                case "object": case "embed": return T_OBJECT;
+                case "empty": return T_XHR;
+            }
+        }
+        String path = r.getUrl().getPath();
+        path = path == null ? "" : path.toLowerCase();
+        if (path.endsWith(".js") || path.endsWith(".mjs")) return T_SCRIPT;
+        if (path.endsWith(".css")) return T_CSS;
+        if (path.matches(".*\\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)$")) return T_IMAGE;
+        if (path.matches(".*\\.(woff2?|ttf|otf|eot)$")) return T_FONT;
+        if (path.matches(".*\\.(mp4|webm|m3u8|ts|m4s|mp3|aac|ogg|mpd)$")) return T_MEDIA;
+        if (accept != null) {
+            if (accept.startsWith("text/css")) return T_CSS;
+            if (accept.startsWith("image/")) return T_IMAGE;
+            if (accept.startsWith("text/html")) return T_FRAME;
+        }
+        String s = r.getUrl().getScheme();
+        if ("ws".equals(s) || "wss".equals(s)) return T_WS;
+        return T_XHR | T_OTHER; // most likely fetch()/XHR
+    }
+
+    /** Builds the engine from filter text (unit tests). */
+    static void loadForTest(String filters) throws Exception {
+        Engine e = new Engine();
+        parse(new java.io.ByteArrayInputStream(filters.getBytes("UTF-8")), e, false);
+        applyBadfilters(e);
+        e.genericCss = buildCss(e.generic, null);
+        eng = e;
+        enabled = true;
+        whitelist = new HashSet<>();
     }
 
     static String buildCss(ArrayList<String> sels, Set<String> skip) {
@@ -113,7 +219,7 @@ final class AdBlocker {
             }
             char c0 = line.charAt(0);
             if (c0 == '!' || c0 == '[') continue;
-            try { parseFilter(line, e); } catch (Exception ignored) { }
+            try { parseFilter(line, e); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         }
         r.close();
     }
@@ -158,12 +264,25 @@ final class AdBlocker {
         String opts = null;
         int di = p.lastIndexOf('$');
         if (di >= 0 && !(p.startsWith("/") && p.endsWith("/"))) { opts = p.substring(di + 1); p = p.substring(0, di); }
-        if (p.startsWith("/") && p.endsWith("/") && p.length() > 1) return; // regex rules are skipped
         Rule rule = new Rule();
         boolean docOpt = false, hideOpt = false;
+        int incTypes = 0, excTypes = 0;
         if (opts != null) {
-            for (String o : opts.toLowerCase().split(",")) {
+            String lo = opts.toLowerCase();
+            if ((","+lo+",").contains(",badfilter,")) {
+                // keep the filter text without "badfilter" and disable the matching rule after all lists are read
+                StringBuilder o2 = new StringBuilder();
+                for (String o : opts.split(",")) if (!o.trim().equalsIgnoreCase("badfilter")) { if (o2.length() > 0) o2.append(','); o2.append(o); }
+                e.badfilters.add((allow ? "@@" : "") + p + (o2.length() > 0 ? "$" + o2 : ""));
+                return;
+            }
+            for (String o : lo.split(",")) {
                 o = o.trim();
+                boolean neg = o.startsWith("~");
+                int tb = typeBit(neg ? o.substring(1) : o);
+                if (tb != 0) { if (neg) excTypes |= tb; else incTypes |= tb; continue; }
+                if (o.equals("important")) { rule.important = true; continue; }
+                if (o.equals("match-case") || o.isEmpty()) continue;
                 if (o.equals("third-party") || o.equals("3p")) rule.party = 1;
                 else if (o.equals("~third-party") || o.equals("first-party") || o.equals("1p")) rule.party = 2;
                 else if (o.startsWith("domain=") || o.startsWith("from=")) {
@@ -178,8 +297,22 @@ final class AdBlocker {
                 else if (o.equals("popup") || o.startsWith("csp") || o.startsWith("redirect") || o.startsWith("removeparam") || o.startsWith("rewrite")
                         || o.startsWith("replace") || o.equals("badfilter") || o.startsWith("header") || o.startsWith("permissions")
                         || o.equals("specifichide") || o.equals("shide") || o.startsWith("urltransform") || o.startsWith("method")
-                        || o.startsWith("to=") || o.startsWith("denyallow") || o.equals("cname") || o.equals("inline-script") || o.equals("inline-font")) return;
+                        || o.startsWith("to=") || o.startsWith("denyallow") || o.equals("cname") || o.equals("inline-script") || o.equals("inline-font")
+                        || o.equals("badfilter") || o.equals("genericblock") || o.equals("webrtc") || o.startsWith("sitekey")) return;
             }
+            if (incTypes != 0) rule.types = incTypes & ~excTypes;
+            else if (excTypes != 0) rule.types = T_ALL & ~excTypes;
+            if ((incTypes != 0 || excTypes != 0) && rule.types == 0) return;
+        }
+        if (p.startsWith("/") && p.endsWith("/") && p.length() > 2) {
+            if (docOpt || hideOpt) return;
+            ArrayList<Rule> any = allow ? e.allowAny : e.blockAny;
+            if (any.size() >= 4000) return;
+            try { rule.re = java.util.regex.Pattern.compile(p.substring(1, p.length() - 1), java.util.regex.Pattern.CASE_INSENSITIVE); }
+            catch (Exception ex) { return; }
+            any.add(rule);
+            e.netRules++;
+            return;
         }
         p = p.toLowerCase();
         if (allow && (docOpt || hideOpt)) {
@@ -190,7 +323,7 @@ final class AdBlocker {
         if (docOpt || hideOpt) return;
         if (p.isEmpty() || p.equals("*") || p.equals("|") || p.equals("||")) return;
         String sh = simpleHost(p);
-        if (sh != null && rule.inc == null && rule.exc == null && rule.party != 2) {
+        if (sh != null && rule.inc == null && rule.exc == null && rule.party != 2 && rule.types == 0 && !rule.important) {
             (allow ? e.allowHosts : e.hosts).add(sh);
             e.netRules++;
             return;
@@ -205,7 +338,7 @@ final class AdBlocker {
         String tok = bestToken(p, rule.hostAnchor || rule.startAnchor, rule.endAnchor);
         HashMap<String, ArrayList<Rule>> map = allow ? e.allow : e.block;
         if (tok == null) {
-            if (allow) e.allowAny.add(rule); else if (p.length() >= 5 && e.blockAny.size() < 400) e.blockAny.add(rule); else return;
+            if (allow) e.allowAny.add(rule); else if (p.length() >= 5 && e.blockAny.size() < 4000) e.blockAny.add(rule); else return;
         } else {
             ArrayList<Rule> l = map.get(tok);
             if (l == null) map.put(tok, l = new ArrayList<>(2));
@@ -273,6 +406,7 @@ final class AdBlocker {
     }
 
     static boolean match(Rule r, String u, int hostStart, int hostEnd) {
+        if (r.re != null) return r.re.matcher(u).find();
         if (r.hostAnchor) {
             for (int i = hostStart; i < hostEnd; i++) {
                 if (i == hostStart || u.charAt(i - 1) == '.') if (matchAt(u, i, r.pat, 0, r.endAnchor)) return true;
@@ -295,6 +429,8 @@ final class AdBlocker {
 
     static String base(String h) {
         if (h == null) return "";
+        String reg = Psl.registrable(h);
+        if (reg != null) return reg;
         String[] p = h.split("\\.");
         if (p.length <= 2) return h;
         String sld = p[p.length - 2];
@@ -306,7 +442,8 @@ final class AdBlocker {
 
     static boolean domainIn(String host, String d) { return host != null && (host.equals(d) || host.endsWith("." + d)); }
 
-    static boolean opts(Rule r, boolean third, String pageHost) {
+    static boolean opts(Rule r, boolean third, String pageHost, int type) {
+        if (r.types != 0 && (r.types & type) == 0) return false;
         if (r.party == 1 && !third) return false;
         if (r.party == 2 && third) return false;
         if (r.exc != null) for (String d : r.exc) if (domainIn(pageHost, d)) return false;
@@ -330,28 +467,47 @@ final class AdBlocker {
 
     static boolean isAd(String host) { return host != null && hostIn(eng.hosts, host.toLowerCase()); }
 
+    /** True if a request to host from pageHost counts as third-party (different registrable domains). */
+    static boolean shouldBlockThirdParty(String host, String pageHost) { return !base(host).equals(base(pageHost)); }
+
+    /** Site key for user exceptions: lower-case host without "www." / "m.". */
+    static String siteKey(String host) {
+        if (host == null) return null;
+        String h = host.toLowerCase();
+        if (h.startsWith("www.")) h = h.substring(4);
+        else if (h.startsWith("m.")) h = h.substring(2);
+        return h;
+    }
+
+    /** True if blocking is off for this page: user exception (site and all its subdomains) or $document rule. */
     static boolean siteAllowed(String pageHost) {
         if (pageHost == null) return false;
         String ph = pageHost.toLowerCase();
-        return whitelist.contains(ph) || hostIn(eng.docAllow, ph);
+        Set<String> w = whitelist;
+        return (!w.isEmpty() && (w.contains(ph) || hostIn(w, ph) || w.contains(siteKey(ph)))) || hostIn(eng.docAllow, ph);
     }
 
-    static boolean anyRule(HashMap<String, ArrayList<Rule>> map, ArrayList<Rule> any, String u, int hs, int he, boolean third, String ph) {
+    /** Returns the first matching rule, or null. */
+    static Rule anyRule(HashMap<String, ArrayList<Rule>> map, ArrayList<Rule> any, String u, int hs, int he, boolean third, String ph, int type) {
         int n = u.length(), i = 0;
+        Rule found = null;
         while (i < n) {
             if (!tokChar(u.charAt(i))) { i++; continue; }
             int s = i;
             while (i < n && tokChar(u.charAt(i))) i++;
             if (i - s < 3) continue;
             ArrayList<Rule> l = map.get(u.substring(s, i));
-            if (l != null) for (Rule r : l) if (opts(r, third, ph) && match(r, u, hs, he)) return true;
+            if (l != null) for (Rule r : l) if (opts(r, third, ph, type) && match(r, u, hs, he)) { if (r.important) return r; if (found == null) found = r; }
         }
-        for (Rule r : any) if (opts(r, third, ph) && match(r, u, hs, he)) return true;
-        return false;
+        if (found != null) return found;
+        for (Rule r : any) if (opts(r, third, ph, type) && match(r, u, hs, he)) return r;
+        return null;
     }
 
+    static boolean shouldBlock(String url, String host, String pageHost) { return shouldBlock(url, host, pageHost, T_FRAME); }
+
     /** Main entry for sub-resource requests. */
-    static boolean shouldBlock(String url, String host, String pageHost) {
+    static boolean shouldBlock(String url, String host, String pageHost, int type) {
         if (!enabled || host == null || url == null) return false;
         if (siteAllowed(pageHost)) return false;
         Engine e = eng;
@@ -362,10 +518,12 @@ final class AdBlocker {
         hs = hs < 0 ? 0 : hs + 3;
         int he = hs;
         while (he < u.length() && u.charAt(he) != '/' && u.charAt(he) != '?' && u.charAt(he) != ':' && u.charAt(he) != '#') he++;
-        if (hostIn(e.allowHosts, h)) return false;
-        boolean blocked = (third && hostIn(e.hosts, h)) || anyRule(e.block, e.blockAny, u, hs, he, third, ph);
+        Rule br = anyRule(e.block, e.blockAny, u, hs, he, third, ph, type);
+        boolean important = br != null && br.important;
+        if (!important && hostIn(e.allowHosts, h)) return false;
+        boolean blocked = br != null || (third && hostIn(e.hosts, h));
         if (!blocked) return false;
-        if (anyRule(e.allow, e.allowAny, u, hs, he, third, ph)) return false;
+        if (!important && anyRule(e.allow, e.allowAny, u, hs, he, third, ph, type) != null) return false;
         totalBlocked.incrementAndGet();
         return true;
     }
@@ -402,15 +560,18 @@ final class AdBlocker {
         return css;
     }
 
-    static void update(Context c) throws Exception {
+    static synchronized void update(Context c) throws Exception {
         int ok = 0;
         Exception last = null;
         for (String[] l : LISTS) {
+            File tmp = new File(c.getFilesDir(), l[0].replace('/', '_') + ".tmp");
             try {
                 HttpURLConnection con = (HttpURLConnection) new URL(l[1]).openConnection();
                 con.setConnectTimeout(20000);
                 con.setReadTimeout(60000);
-                File tmp = new File(c.getFilesDir(), "dl.tmp");
+                con.setRequestProperty("User-Agent", "Mozilla/5.0 (Lasur)");
+                int code = con.getResponseCode();
+                if (code != 200) throw new Exception("HTTP " + code);
                 try (InputStream in = con.getInputStream(); OutputStream out = new FileOutputStream(tmp)) {
                     byte[] b = new byte[65536];
                     int n;
@@ -420,7 +581,7 @@ final class AdBlocker {
                 File f = new File(c.getFilesDir(), l[0].replace('/', '_'));
                 if (!tmp.renameTo(f)) throw new Exception(L.t("Не удалось сохранить"));
                 ok++;
-            } catch (Exception ex) { last = ex; }
+            } catch (Exception ex) { last = ex; tmp.delete(); }
         }
         if (ok == 0 && last != null) throw last;
         reload(c);

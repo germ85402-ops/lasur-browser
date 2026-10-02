@@ -15,16 +15,19 @@
 
 ## Сборка
 Готовые APK собирает GitHub Actions (вкладка **Actions** → последний запуск → артефакт `Lasur-apk`).
-При пуше тега `v*` (например `v1.7.1`) APK публикуется в **Releases**.
+При пуше тега `v*` (например `v1.8.0`) APK публикуется в **Releases**.
 
-Локально нужны JDK 17, Android SDK (platform 34) и Gradle 8.9:
+Локально нужны JDK 17, Android SDK (platform 36, build-tools 35) и Gradle 8.11+:
 
 ```bash
-gradle assembleRelease
+gradle testDebugUnitTest   # unit-тесты (AdBlocker, HLS)
+gradle assembleRelease     # релиз собирается с R8 (minify + shrinkResources)
 ```
 
 Иконки хранятся в `app/src/main/binres` в виде Base64 и распаковываются при сборке,
-списки фильтров рекламы скачиваются автоматически.
+списки фильтров рекламы скачиваются автоматически (кешируются на 7 дней; сборка падает, только если
+нет ни сети, ни ранее скачанной копии). `app/src/main/assets/psl.dat` — Public Suffix List
+(https://publicsuffix.org) для определения регистрируемого домена.
 
 ### Подпись
 Чтобы обновления ставились поверх установленной версии, APK нужно подписывать одним ключом.

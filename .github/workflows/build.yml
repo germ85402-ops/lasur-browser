@@ -23,7 +23,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Restore signing key
         env:
@@ -36,8 +36,17 @@ jobs:
             echo "::warning::SIGNING_KEYSTORE_BASE64 is not set - APK will be signed with a debug key"
           fi
 
-      - name: Accept Android SDK licenses
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Accept Android SDK licenses and install platform 36
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Lint (non-blocking)
+        continue-on-error: true
+        run: gradle lintDebug --no-daemon
 
       - name: Build release APK
         env:

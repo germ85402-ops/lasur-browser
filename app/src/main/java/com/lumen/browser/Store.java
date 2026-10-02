@@ -4,7 +4,12 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import android.os.Handler;
+import android.os.Looper;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -13,8 +18,15 @@ final class Store {
         String t, u; long d;
         int c;          // custom tile color (0 = automatic)
         boolean letter; // show letter instead of site icon
+        String f = "";  // bookmark folder ("" = top level)
         Item(String t, String u, long d) { this.t = t; this.u = u; this.d = d; }
+        Item copy() { Item i = new Item(t, u, d); i.c = c; i.letter = letter; i.f = f; return i; }
     }
+
+    /** Single background thread for ordered SharedPreferences / file writes. */
+    static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final HashMap<String, Runnable> pendingSaves = new HashMap<>();
 
     static final String[] ENGINES = {"Google", "DuckDuckGo", "Яндекс", "Bing"};
     static final String[] ENGINE_URLS = {
@@ -49,24 +61,55 @@ final class Store {
                 Item it = new Item(o.optString("t"), o.optString("u"), o.optLong("d"));
                 it.c = o.optInt("c", 0);
                 it.letter = o.optBoolean("l", false);
+                it.f = o.optString("f", "");
                 l.add(it);
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         return l;
     }
 
+    /**
+     * Saves are debounced and serialized off the main thread: the history list (up to 1500 entries)
+     * used to be re-encoded on the UI thread after every page load.
+     */
     void save(String k, ArrayList<Item> l) {
-        JSONArray a = new JSONArray();
-        try {
-            for (Item it : l) {
-                JSONObject o = new JSONObject();
-                o.put("t", it.t); o.put("u", it.u); o.put("d", it.d);
-                if (it.c != 0) o.put("c", it.c);
-                if (it.letter) o.put("l", true);
-                a.put(o);
-            }
-        } catch (Exception ignored) { }
-        p.edit().putString(k, a.toString()).apply();
+        Runnable old = pendingSaves.remove(k);
+        if (old != null) ui.removeCallbacks(old);
+        Runnable r = () -> { pendingSaves.remove(k); writeNow(k, l); };
+        pendingSaves.put(k, r);
+        ui.postDelayed(r, 700);
+    }
+
+    /** Writes pending changes immediately (e.g. when the app goes to background). */
+    void flush() {
+        for (Runnable r : new ArrayList<>(pendingSaves.values())) { ui.removeCallbacks(r); r.run(); }
+    }
+
+    private void writeNow(String k, ArrayList<Item> l) {
+        final ArrayList<Item> snap = new ArrayList<>(l.size());
+        for (Item it : l) snap.add(it.copy());
+        IO.execute(() -> {
+            JSONArray a = new JSONArray();
+            try {
+                for (Item it : snap) {
+                    JSONObject o = new JSONObject();
+                    o.put("t", it.t); o.put("u", it.u); o.put("d", it.d);
+                    if (it.c != 0) o.put("c", it.c);
+                    if (it.letter) o.put("l", true);
+                    if (it.f != null && !it.f.isEmpty()) o.put("f", it.f);
+                    a.put(o);
+                }
+            } catch (Exception e) { android.util.Log.w("Lasur", "save " + k, e); }
+            p.edit().putString(k, a.toString()).apply();
+        });
+    }
+
+    /** Bookmark folders in display order. */
+    ArrayList<String> folders() {
+        ArrayList<String> r = new ArrayList<>();
+        for (Item it : bookmarks) if (it.f != null && !it.f.isEmpty() && !r.contains(it.f)) r.add(it.f);
+        java.util.Collections.sort(r, String.CASE_INSENSITIVE_ORDER);
+        return r;
     }
 
     void saveBookmarks() { save("bookmarks", bookmarks); }
@@ -106,6 +149,8 @@ final class Store {
     void setEngine(int i) { p.edit().putInt("engine", i).apply(); }
     String searchUrl() { int e = engine(); return ENGINE_URLS[e < 0 || e >= ENGINE_URLS.length ? 0 : e]; }
 
+    boolean bottomBar() { return bool("bottomBar", false); }
+    boolean hideOnScroll() { return bool("hideBar", false); }
     boolean adblock() { return bool("adblock", true); }
     boolean blockPopups() { return bool("popups", true); }
     boolean js() { return bool("js", true); }
@@ -113,9 +158,12 @@ final class Store {
     boolean restoreTabs() { return bool("restore", true); }
 
     Set<String> whitelist() { return new HashSet<>(p.getStringSet("whitelist", new HashSet<>())); }
+    /** Exceptions are stored per site ("www." / "m." stripped) and cover all its subdomains. */
     void setWhitelisted(String host, boolean w) {
         Set<String> s = whitelist();
-        if (w) s.add(host); else s.remove(host);
+        String key = AdBlocker.siteKey(host);
+        if (w) s.add(key);
+        else for (String e : new java.util.ArrayList<>(s)) if (e.equals(host) || e.equals(key) || AdBlocker.domainIn(host, e)) s.remove(e);
         p.edit().putStringSet("whitelist", s).apply();
     }
 }

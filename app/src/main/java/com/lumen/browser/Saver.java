@@ -63,11 +63,11 @@ final class Saver {
     }
 
     void abort() {
-        try { out.close(); } catch (Exception ignored) { }
+        try { out.close(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         try {
             if (Build.VERSION.SDK_INT >= 29 && uri != null) c.getContentResolver().delete(uri, null, null);
             else if (file != null) file.delete();
-        } catch (Exception ignored) { }
+        } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     /** Content URI that can be opened by other apps (Android 10+), else null. */

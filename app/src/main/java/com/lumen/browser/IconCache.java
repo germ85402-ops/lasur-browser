@@ -13,7 +13,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -23,7 +24,9 @@ final class IconCache {
 
     static final LruCache<String, Bitmap> mem = new LruCache<>(96);
     static final ExecutorService ex = Executors.newFixedThreadPool(3);
-    static final HashSet<String> pending = new HashSet<>(), failed = new HashSet<>();
+    static final HashMap<String, ArrayList<Cb>> pending = new HashMap<>();
+    static final HashMap<String, Long> failed = new HashMap<>(); // host -> time of the failed attempt (retried after 6 h)
+    static final long RETRY_MS = 6 * 3600_000L;
     static final Handler ui = new Handler(Looper.getMainLooper());
 
     static String host(String url) {
@@ -41,7 +44,10 @@ final class IconCache {
         return new File(d, host.replaceAll("[^a-z0-9.-]", "_") + ".png");
     }
 
-    static Bitmap get(Context c, String url, Cb cb) {
+    static Bitmap get(Context c, String url, Cb cb) { return get(c, url, cb, true); }
+
+    /** @param network false for incognito: only the memory/disk cache is used, nothing is requested. */
+    static Bitmap get(Context c, String url, Cb cb, boolean network) {
         String h = host(url);
         if (h == null) return null;
         Bitmap b = mem.get(h);
@@ -51,20 +57,29 @@ final class IconCache {
             b = BitmapFactory.decodeFile(f.getAbsolutePath());
             if (b != null) { mem.put(h, b); return b; }
         }
+        if (!network) return null;
         synchronized (pending) {
-            if (failed.contains(h) || pending.contains(h)) return null;
-            pending.add(h);
+            Long ft = failed.get(h);
+            if (ft != null && System.currentTimeMillis() - ft < RETRY_MS) return null;
+            ArrayList<Cb> waiting = pending.get(h);
+            if (waiting != null) { if (cb != null) waiting.add(cb); return null; }
+            waiting = new ArrayList<>();
+            if (cb != null) waiting.add(cb);
+            pending.put(h, waiting);
         }
         final Context app = c.getApplicationContext();
         ex.execute(() -> {
-            Bitmap r = fetch("https://www.google.com/s2/favicons?domain=" + h + "&sz=128");
+            // The site itself is asked first; third-party icon services are only a fallback.
+            Bitmap r = fetch("https://" + h + "/apple-touch-icon.png");
+            if (r == null) r = fetch("https://" + h + "/favicon.ico");
             if (r == null) r = fetch("https://icons.duckduckgo.com/ip3/" + h + ".ico");
-            if (r == null) r = fetch("https://" + h + "/apple-touch-icon.png");
+            if (r == null) r = fetch("https://www.google.com/s2/favicons?domain=" + h + "&sz=128");
             final Bitmap res = r;
-            synchronized (pending) { pending.remove(h); if (res == null) failed.add(h); }
+            final ArrayList<Cb> cbs;
+            synchronized (pending) { cbs = pending.remove(h); if (res == null) failed.put(h, System.currentTimeMillis()); else failed.remove(h); }
             if (res != null) {
                 save(app, h, res);
-                ui.post(() -> { mem.put(h, res); if (cb != null) cb.done(res); });
+                ui.post(() -> { mem.put(h, res); if (cbs != null) for (Cb x : cbs) x.done(res); });
             }
         });
         return null;
@@ -90,7 +105,7 @@ final class IconCache {
     }
 
     static void save(Context c, String h, Bitmap b) {
-        try (FileOutputStream o = new FileOutputStream(file(c, h))) { b.compress(Bitmap.CompressFormat.PNG, 100, o); } catch (Exception ignored) { }
+        try (FileOutputStream o = new FileOutputStream(file(c, h))) { b.compress(Bitmap.CompressFormat.PNG, 100, o); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     static Bitmap fetch(String u) {

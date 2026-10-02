@@ -12,6 +12,7 @@ def filterLists = [
     'filters/easylist.txt'   : 'https://easylist.to/easylist/easylist.txt',
     'filters/advblock.txt'   : 'https://easylist-downloads.adblockplus.org/advblock.txt',
     'filters/adguard_ru.txt' : 'https://filters.adtidy.org/extension/ublock/filters/1.txt',
+    'psl.dat'                : 'https://publicsuffix.org/list/public_suffix_list.dat',
 ]
 
 tasks.register('decodeBinaries') {
@@ -31,19 +32,33 @@ tasks.register('decodeBinaries') {
 tasks.register('downloadFilters') {
     outputs.dir new File(genDir, 'assets')
     doLast {
+        def weekMs = 7L * 24 * 3600 * 1000
         filterLists.each { name, url ->
             def out = new File(genDir, "assets/$name")
-            if (out.exists() && out.length() > 10000) return
+            boolean fresh = out.exists() && out.length() > 10000 && System.currentTimeMillis() - out.lastModified() < weekMs
+            if (fresh) return
             out.parentFile.mkdirs()
-            try {
-                def c = new URL(url).openConnection()
-                c.setRequestProperty('User-Agent', 'Mozilla/5.0 (Lasur build)')
-                c.connectTimeout = 30000
-                c.readTimeout = 120000
-                out.bytes = c.inputStream.bytes
-                logger.lifecycle("Downloaded $name (${out.length()} bytes)")
-            } catch (Exception e) {
-                logger.warn("Could not download $name: ${e.message}")
+            Exception last = null
+            for (int attempt = 0; attempt < 3 && !(out.exists() && System.currentTimeMillis() - out.lastModified() < 60000); attempt++) {
+                try {
+                    def c = new URL(url).openConnection()
+                    c.setRequestProperty('User-Agent', 'Mozilla/5.0 (Lasur build)')
+                    c.connectTimeout = 30000
+                    c.readTimeout = 120000
+                    byte[] data = c.inputStream.bytes
+                    if (data.length < 10000) throw new IOException("only ${data.length} bytes")
+                    out.bytes = data
+                    logger.lifecycle("Downloaded $name (${out.length()} bytes)")
+                    last = null
+                } catch (Exception e) {
+                    last = e
+                    logger.warn("Could not download $name (attempt ${attempt + 1}): ${e.message}")
+                }
+            }
+            // An APK without filter lists would silently ship without ad blocking: fail instead
+            // (a stale copy from an earlier build is still accepted).
+            if (last != null && !(out.exists() && out.length() > 10000)) {
+                throw new GradleException("Filter list $name could not be downloaded from $url: ${last.message}")
             }
         }
     }
@@ -53,14 +68,16 @@ preBuild.dependsOn decodeBinaries, downloadFilters
 
 android {
     namespace 'com.lumen.browser'
-    compileSdk 34
+    compileSdk 36
     defaultConfig {
         applicationId 'com.lumen.browser'
         minSdk 26
-        targetSdk 34
-        versionCode 14
-        versionName '1.7.4'
+        targetSdk 36
+        versionCode 15
+        versionName '1.8.0'
     }
+    buildFeatures { buildConfig true }
+    testOptions { unitTests.returnDefaultValues = true }
     sourceSets {
         main {
             res.srcDirs += new File(genDir, 'res')
@@ -71,17 +88,22 @@ android {
         release {
             // Provided by CI secrets (see README) or by a local keystore.properties-free env.
             def ks = System.getenv('SIGNING_KEYSTORE_FILE') ?: 'release.jks'
-            if (file(ks).exists()) {
+            def sp = System.getenv('SIGNING_STORE_PASSWORD'), ka = System.getenv('SIGNING_KEY_ALIAS')
+            if (file(ks).exists() && sp && ka) {
                 storeFile file(ks)
-                storePassword System.getenv('SIGNING_STORE_PASSWORD')
-                keyAlias System.getenv('SIGNING_KEY_ALIAS')
-                keyPassword System.getenv('SIGNING_KEY_PASSWORD') ?: System.getenv('SIGNING_STORE_PASSWORD')
+                storePassword sp
+                keyAlias ka
+                keyPassword System.getenv('SIGNING_KEY_PASSWORD') ?: sp
+            } else if (file(ks).exists()) {
+                logger.warn("Keystore $ks found but SIGNING_STORE_PASSWORD / SIGNING_KEY_ALIAS are empty: using the debug key")
             }
         }
     }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release.storeFile != null ? signingConfigs.release : signingConfigs.debug
         }
     }
@@ -93,4 +115,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     lint { abortOnError false; checkReleaseBuilds false }
+}
+
+dependencies {
+    // Only for WebView features the framework API lacks: separate incognito profile (cookies/storage).
+    implementation 'androidx.webkit:webkit:1.14.0'
+    testImplementation 'junit:junit:4.13.2'
 }
