@@ -160,6 +160,7 @@ public class MainActivity extends Activity {
             else selectTab(tabs.get(Math.max(0, Math.min(store.p.getInt("tabIndex", 0), tabs.size() - 1))));
         }
         registerDlReceiver();
+        registerPipReceiver();
     }
 
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleIntent(i); }
@@ -173,6 +174,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         if (dlReceiver != null) { try { unregisterReceiver(dlReceiver); } catch (Exception ignored) { } }
+        if (pipReceiver != null) { try { unregisterReceiver(pipReceiver); } catch (Exception ignored) { } }
         for (Tab t : tabs) { try { t.web.destroy(); } catch (Exception ignored) { } }
         super.onDestroy();
     }
@@ -3031,7 +3033,7 @@ public class MainActivity extends Activity {
                     toast(L.t("Данные удалены"));
                 }).setNegativeButton(L.t("Отмена"), null).show());
         section(box, L.t("О браузере"));
-        actionRow(box, "Lasur 1.7.1", L.t("Браузер без рекламы с загрузкой видео"), null);
+        actionRow(box, "Lasur 1.7.2", L.t("Браузер без рекламы с загрузкой видео"), null);
         settingsDialog = fullDialog(L.t("Настройки"), sv, null, null);
     }
 
@@ -4528,6 +4530,7 @@ public class MainActivity extends Activity {
             + "try{var D=Document.prototype,hd=Object.getOwnPropertyDescriptor(D,'hidden'),vd=Object.getOwnPropertyDescriptor(D,'visibilityState');"
             + "Object.defineProperty(document,'hidden',{configurable:true,get:function(){return keep()?false:hd.get.call(document)}});"
             + "Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return keep()?'visible':vd.get.call(document)}});"
+            + "try{var hf=Document.prototype.hasFocus;document.hasFocus=function(){return keep()?true:hf.call(document)}}catch(e){}"
             + "Object.defineProperty(document,'webkitHidden',{configurable:true,get:function(){return document.hidden}});"
             + "Object.defineProperty(document,'webkitVisibilityState',{configurable:true,get:function(){return document.visibilityState}});}catch(e){}"
             + "['visibilitychange','webkitvisibilitychange','blur','pagehide','freeze'].forEach(function(n){window.addEventListener(n,function(e){if(keep())e.stopImmediatePropagation()},true);"
@@ -4536,8 +4539,8 @@ public class MainActivity extends Activity {
             + "function rep(){try{var best=null,ba=0;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];"
             + "if(!v.paused&&!v.ended&&v.readyState>1){var r=v.getBoundingClientRect(),a=r.width*r.height;if(a>=ba){ba=a;best=v}}}"
             + "var s=(best?1:0)+','+(best?best.videoWidth:0)+','+(best?best.videoHeight:0);if(s!=last){last=s;LumenBridge.media(best?1:0,best?best.videoWidth:0,best?best.videoHeight:0)}}catch(e){}}"
-            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){if(n=='playing')window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&Date.now()-(window.__lasurPipAt||0)<3000){var t=e.target;setTimeout(function(){try{t.play()}catch(x){}},60)}setTimeout(rep,50)},true)});setInterval(rep,1500);rep();})();";
-    static final String PIP_ON_JS = "(function(){try{window.__lasurPip=1;window.__lasurPipAt=Date.now();var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
+            + "['play','playing','pause','ended','emptied','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){if(n=='playing')window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&!window.__lasurUserPause){var t=e.target;if(!t.ended&&t.currentTime>0)setTimeout(function(){try{if(t.paused&&window.__lasurPip&&!window.__lasurUserPause)t.play()}catch(x){}},80)}setTimeout(rep,50)},true)});setInterval(rep,1500);rep();})();";
+    static final String PIP_ON_JS = "(function(){try{window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
             + "a=r.width*r.height+(v.paused?0:1e9);if(a>ba){ba=a;best=v}}if(!best)return;var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"
             + "st.textContent='.__lasurPipA{transform:none!important;filter:none!important;contain:none!important;perspective:none!important;will-change:auto!important;z-index:2147483646!important}'"
             + "+'.__lasurPipV{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;"
@@ -4548,7 +4551,29 @@ public class MainActivity extends Activity {
     static final String PIP_OFF_JS = "(function(){try{window.__lasurPip=0;var a=document.querySelectorAll('.__lasurPipA,.__lasurPipV');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurPipA','__lasurPipV');"
             + "document.documentElement.classList.remove('__lasurPipH');var s=document.getElementById('__lasurPip');if(s)s.remove();}catch(e){}})();";
 
-    static final String PIP_FS_JS = "(function(){window.__lasurPip=1;window.__lasurPipAt=Date.now();try{var v=document.querySelectorAll('video');for(var i=0;i<v.length;i++)if(v[i].paused&&Date.now()-(window.__lasurLastPlay||0)<5000&&v[i].currentTime>0)v[i].play()}catch(e){}})();";
+    static final String PIP_FS_JS = "(function(){window.__lasurPip=1;window.__lasurUserPause=0;window.__lasurPipAt=Date.now();try{var v=document.querySelectorAll('video');for(var i=0;i<v.length;i++)if(v[i].paused&&Date.now()-(window.__lasurLastPlay||0)<5000&&v[i].currentTime>0)v[i].play()}catch(e){}})();";
+
+    static final String PIP_TOGGLE_JS = "(function(){try{var best=null,ba=-1;var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i],r=v.getBoundingClientRect(),"
+            + "a=r.width*r.height+(v.paused?0:1e9)+(v.currentTime>0?1e8:0);if(a>ba){ba=a;best=v}}if(!best)return;"
+            + "if(best.paused){window.__lasurUserPause=0;best.play()}else{window.__lasurUserPause=1;best.pause()}}catch(e){}})();";
+    static final String ACTION_PIP_TOGGLE = "com.lumen.browser.PIP_TOGGLE";
+    android.content.BroadcastReceiver pipReceiver;
+
+    void registerPipReceiver() {
+        pipReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) {
+                if (current == null) return;
+                current.mediaPlaying = !current.mediaPlaying; // optimistic icon flip, page reports the real state
+                updatePipParams();
+                current.web.evaluateJavascript(PIP_TOGGLE_JS, null);
+            }
+        };
+        try {
+            android.content.IntentFilter f = new android.content.IntentFilter(ACTION_PIP_TOGGLE);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(pipReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(pipReceiver, f);
+        } catch (Exception e) { pipReceiver = null; }
+    }
 
     boolean pipEligible() {
         return store.bool("pip", true) && current != null && !current.ntp && switcher.getVisibility() != View.VISIBLE
@@ -4564,6 +4589,17 @@ public class MainActivity extends Activity {
             b.setAspectRatio(new Rational(w, h));
         } else b.setAspectRatio(new Rational(16, 9));
         if (Build.VERSION.SDK_INT >= 31) { b.setAutoEnterEnabled(pipEligible()); b.setSeamlessResizeEnabled(true); }
+        try {
+            boolean playing = current != null && current.mediaPlaying;
+            Intent ti = new Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName());
+            android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(this, 7, ti,
+                    android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+            String label = playing ? "Pause" : "Play";
+            ArrayList<android.app.RemoteAction> acts = new ArrayList<>();
+            acts.add(new android.app.RemoteAction(android.graphics.drawable.Icon.createWithResource(this,
+                    playing ? R.drawable.ic_pip_pause : R.drawable.ic_pip_play), label, label, pi));
+            b.setActions(acts);
+        } catch (Exception ignored) { }
         return b.build();
     }
 
