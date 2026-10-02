@@ -122,11 +122,30 @@ public class MainActivity extends Activity {
             + "function sc(){try{var v=document.querySelectorAll('video,video source,audio source');for(var i=0;i<v.length;i++){"
             + "var s=v[i].currentSrc||v[i].src;if(s&&s.indexOf('http')==0)LumenBridge.onVideo(s,document.title);}}catch(e){}}"
             + "sc();setInterval(sc,2500);document.addEventListener('play',sc,true);document.addEventListener('loadedmetadata',sc,true);}catch(e){}})();";
-    static final String YT_JS = "(function(){if(window.__lumenYt)return;window.__lumenYt=1;setInterval(function(){try{"
-            + "var p=document.querySelector('.ad-showing video,.ad-interrupting video');if(p&&isFinite(p.duration)&&p.duration>0){p.muted=true;p.currentTime=p.duration;}"
-            + "var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,.ytm-skip-ad-button');if(b)b.click();"
-            + "var o=document.querySelectorAll('ytd-ad-slot-renderer,ytm-promoted-sparkles-web-renderer,ytm-companion-ad-renderer,ad-slot-renderer');for(var i=0;i<o.length;i++)o[i].style.display='none';"
-            + "}catch(e){}},400);})();";
+    static final String YT_JS = "(function(){if(window.__lasurYtp)return;window.__lasurYtp=1;var K=['adPlacements','playerAds','adSlots','adBreakHeartbeatParams','adBreakParams'];func"
+            + "tion pr(o,d){try{if(!o||typeof o!='object'||d>4)return o;for(var i=0;i<K.length;i++)if(K[i] in o)delete o[K[i]];if(o.playerResponse)pr(o.playerRespons"
+            + "e,d+1);if(o.response)pr(o.response,d+1);if(o.playerConfig&&o.playerConfig.daiConfig)delete o.playerConfig.daiConfig;if(Array.isArray(o)){for(var j=0;j"
+            + "<o.length;j++)pr(o[j],d+1)}}catch(e){}return o}function trap(n){try{var v=window[n];if(v)pr(v,0);Object.defineProperty(window,n,{configurable:true,get"
+            + ":function(){return v},set:function(x){v=pr(x,0)}})}catch(e){}}trap('ytInitialPlayerResponse');trap('ytInitialData');try{var yp=window.ytplayer||{};if("
+            + "yp.config&&yp.config.args&&yp.config.args.raw_player_response)pr(yp.config.args.raw_player_response,0)}catch(e){}function hit(u){u=String(u||'');retur"
+            + "n u.indexOf('/youtubei/v1/player')>=0||u.indexOf('/youtubei/v1/next')>=0||u.indexOf('/youtubei/v1/reel')>=0||u.indexOf('/youtubei/v1/browse')>=0}try{v"
+            + "ar of=window.fetch;window.fetch=function(i,o){var u=typeof i=='string'?i:(i&&i.url);var p=of.apply(this,arguments);if(!hit(u))return p;return p.then(f"
+            + "unction(r){if(!r||!r.ok)return r;return r.clone().text().then(function(t){try{var j=JSON.parse(t);pr(j,0);return new Response(JSON.stringify(j),{statu"
+            + "s:r.status,statusText:r.statusText,headers:r.headers})}catch(e){return r}},function(){return r})})}}catch(e){}try{var oo=XMLHttpRequest.prototype.open"
+            + ";XMLHttpRequest.prototype.open=function(m,u){this.__lu=u;return oo.apply(this,arguments)};var gd=Object.getOwnPropertyDescriptor(XMLHttpRequest.protot"
+            + "ype,'responseText'),gr=Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype,'response');function fix(x,s){if(!hit(x.__lu)||typeof s!='string'||x.r"
+            + "eadyState!=4)return s;if(x.__lc!==undefined)return x.__lc;try{var j=JSON.parse(s);pr(j,0);x.__lc=JSON.stringify(j)}catch(e){x.__lc=s}return x.__lc}Obj"
+            + "ect.defineProperty(XMLHttpRequest.prototype,'responseText',{configurable:true,get:function(){return fix(this,gd.get.call(this))}});Object.defineProper"
+            + "ty(XMLHttpRequest.prototype,'response',{configurable:true,get:function(){var r=gr.get.call(this);return (this.responseType==''||this.responseType=='te"
+            + "xt')?fix(this,r):r}});}catch(e){}try{var st=document.createElement('style');st.textContent='.ytp-ad-module,.ytp-ad-overlay-container,.ytp-ad-player-ov"
+            + "erlay,.ytp-ad-text,.ytp-ad-preview-container,.ytp-ad-skip-button-container,.ytp-skip-ad,.ytm-skip-ad-button,ytm-promoted-sparkles-web-renderer,ytm-com"
+            + "panion-ad-renderer,ytd-ad-slot-renderer,ad-slot-renderer,ytm-ad-slot-renderer,.video-ads,#player-ads,ytm-promoted-video-renderer{display:none!importan"
+            + "t}.ad-showing video,.ad-interrupting video{opacity:0!important}';(document.head||document.documentElement).appendChild(st)}catch(e){}function skip(){t"
+            + "ry{var a=document.querySelector('.ad-showing,.ad-interrupting');if(!a){if(window.__lasurAdV){var q=window.__lasurAdV;window.__lasurAdV=null;try{q.mute"
+            + "d=!!window.__lasurAdWasMuted;if(q.playbackRate==16)q.playbackRate=1}catch(e){}}return}var p=a.querySelector('video');if(p){if(!window.__lasurAdV){wind"
+            + "ow.__lasurAdV=p;window.__lasurAdWasMuted=p.muted}p.muted=true;try{p.playbackRate=16}catch(e){}if(isFinite(p.duration)&&p.duration>0&&p.currentTime<p.d"
+            + "uration-0.1)p.currentTime=p.duration}var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,.ytm-skip-ad-but"
+            + "ton button,.ytm-skip-ad-button');if(b)b.click()}catch(e){}}setInterval(skip,200);})();";
 
     // ------------------------------------------------------------------ lifecycle
     @Override protected void onCreate(Bundle b) {
@@ -638,6 +657,8 @@ public class MainActivity extends Activity {
             t.url = url;
             t.pageUrl = url;
             try { t.pageHost = Uri.parse(url).getHost(); } catch (Exception e) { t.pageHost = null; }
+            if (t.pageHost != null && t.pageHost.endsWith("youtube.com") && AdBlocker.enabled && !AdBlocker.whitelist.contains(t.pageHost))
+                v.evaluateJavascript(YT_JS, null);
             t.video = null;
             t.blocked.set(0);
             t.loading = true;
@@ -3033,7 +3054,7 @@ public class MainActivity extends Activity {
                     toast(L.t("Данные удалены"));
                 }).setNegativeButton(L.t("Отмена"), null).show());
         section(box, L.t("О браузере"));
-        actionRow(box, "Lasur 1.7.2", L.t("Браузер без рекламы с загрузкой видео"), null);
+        actionRow(box, "Lasur 1.7.3", L.t("Браузер без рекламы с загрузкой видео"), null);
         settingsDialog = fullDialog(L.t("Настройки"), sv, null, null);
     }
 
