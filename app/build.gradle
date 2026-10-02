@@ -1,0 +1,96 @@
+plugins { id 'com.android.application' }
+
+// ---------------------------------------------------------------------------
+// Binary resources (icons) are stored as Base64 text in src/main/binres and
+// ad-block lists are downloaded at build time. Both end up in build/generated.
+// ---------------------------------------------------------------------------
+def genDir = new File(buildDir, 'generated/lasur')
+def binDir = file('src/main/binres')
+
+def filterLists = [
+    'hosts.txt'              : 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts',
+    'filters/easylist.txt'   : 'https://easylist.to/easylist/easylist.txt',
+    'filters/advblock.txt'   : 'https://easylist-downloads.adblockplus.org/advblock.txt',
+    'filters/adguard_ru.txt' : 'https://filters.adtidy.org/extension/ublock/filters/1.txt',
+]
+
+tasks.register('decodeBinaries') {
+    inputs.dir binDir
+    outputs.dir new File(genDir, 'res')
+    doLast {
+        binDir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+            if (!f.name.endsWith('.b64')) return
+            def rel = binDir.toPath().relativize(f.toPath()).toString().replace('\\', '/').replaceAll(/\.b64$/, '')
+            def out = new File(genDir, rel)
+            out.parentFile.mkdirs()
+            out.bytes = Base64.mimeDecoder.decode(f.text.trim())
+        }
+    }
+}
+
+tasks.register('downloadFilters') {
+    outputs.dir new File(genDir, 'assets')
+    doLast {
+        filterLists.each { name, url ->
+            def out = new File(genDir, "assets/$name")
+            if (out.exists() && out.length() > 10000) return
+            out.parentFile.mkdirs()
+            try {
+                def c = new URL(url).openConnection()
+                c.setRequestProperty('User-Agent', 'Mozilla/5.0 (Lasur build)')
+                c.connectTimeout = 30000
+                c.readTimeout = 120000
+                out.bytes = c.inputStream.bytes
+                logger.lifecycle("Downloaded $name (${out.length()} bytes)")
+            } catch (Exception e) {
+                logger.warn("Could not download $name: ${e.message}")
+            }
+        }
+    }
+}
+
+preBuild.dependsOn decodeBinaries, downloadFilters
+
+android {
+    namespace 'com.lumen.browser'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.lumen.browser'
+        minSdk 26
+        targetSdk 34
+        versionCode 11
+        versionName '1.7.1'
+    }
+    sourceSets {
+        main {
+            res.srcDirs += new File(genDir, 'res')
+            assets.srcDirs += new File(genDir, 'assets')
+        }
+    }
+    signingConfigs {
+        release {
+            // Provided by CI secrets (see README) or by a local keystore.properties-free env.
+            def ks = System.getenv('SIGNING_KEYSTORE_FILE') ?: 'release.jks'
+            if (file(ks).exists()) {
+                storeFile file(ks)
+                storePassword System.getenv('SIGNING_STORE_PASSWORD')
+                keyAlias System.getenv('SIGNING_KEY_ALIAS')
+                keyPassword System.getenv('SIGNING_KEY_PASSWORD') ?: System.getenv('SIGNING_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release.storeFile != null ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    applicationVariants.all { v ->
+        v.outputs.all { outputFileName = "Lasur-${v.versionName}.apk" }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
