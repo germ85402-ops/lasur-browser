@@ -127,6 +127,7 @@ public class MainActivity extends Activity {
     ProgressBar progress;
 
     View customView; WebChromeClient.CustomViewCallback customCb;
+    Tab fullscreenWebTab;
     ValueCallback<Uri[]> fileCb;
     Runnable pendingPerm;
     String mobileUA, desktopUA;
@@ -176,8 +177,11 @@ public class MainActivity extends Activity {
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleIntent(i); }
 
     @Override protected void onPause() {
+        if (pipEligible() && customView != null) rememberPipFullscreen();
         super.onPause();
         activityVisible = false;
+        if (current != null && (pipEntering || isInPictureInPictureMode()))
+            current.web.evaluateJavascript(Scripts.R("window.__lasurPipBackground=true;"), null);
         saveTabs();
         store.flush();
         store.p.edit().putLong("blockedTotal", AdBlocker.totalBlocked.get()).apply();
@@ -993,6 +997,8 @@ public class MainActivity extends Activity {
         }
 
         @Override public void onPageStarted(WebView v, String url, Bitmap fav) {
+            if (fullscreenWebTab == t) hideCustomView();
+            if (pipFullscreenTab == t) { pipHadFullscreen = false; pipReturnFullscreen = false; pipFullscreenTab = null; }
             abortBlobs(t);
             if (t == current) resetBars(false);
             postStrip();
@@ -1145,6 +1151,7 @@ public class MainActivity extends Activity {
         @Override public void onReceivedIcon(WebView v, Bitmap icon) { t.favicon = icon; if (!t.incognito) IconCache.offer(MainActivity.this, v.getUrl(), icon); postStrip(); }
 
         @Override public void onShowCustomView(View view, CustomViewCallback cb) {
+            if (fullscreenWebTab != null) hideCustomView();
             if (customView != null) { cb.onCustomViewHidden(); return; }
             customView = view;
             customCb = cb;
@@ -1160,7 +1167,11 @@ public class MainActivity extends Activity {
             notice(R.drawable.ic_fullscreen_exit, L.t("Полноэкранный режим · «Назад» — выход"));
         }
 
-        @Override public void onHideCustomView() { hideCustomView(); }
+        @Override public void onHideCustomView() {
+            if (fullscreenWebTab != null) return; // this fullscreen host belongs to the browser
+            if (pipEntering || isInPictureInPictureMode()) rememberPipFullscreen();
+            hideCustomView();
+        }
 
         @Override public boolean onCreateWindow(WebView v, boolean dialog, boolean gesture, Message msg) {
             if (msg == null || !(msg.obj instanceof WebView.WebViewTransport)) return false;
@@ -1205,6 +1216,13 @@ public class MainActivity extends Activity {
 
     void hideCustomView() {
         if (customView == null) return;
+        if (fullscreenWebTab != null) {
+            Tab t = fullscreenWebTab;
+            fullscreenWebTab = null;
+            if (t.web.getParent() != null) ((android.view.ViewGroup) t.web.getParent()).removeView(t.web);
+            if (t == current) webContainer.addView(t.web, new FrameLayout.LayoutParams(MATCH, MATCH));
+            t.web.evaluateJavascript(FULLSCREEN_OFF_JS, null);
+        }
         fullscreen.removeView(customView);
         fullscreen.setVisibility(View.GONE);
         customView = null;
@@ -1214,7 +1232,7 @@ public class MainActivity extends Activity {
         if (customCb != null) customCb.onCustomViewHidden();
         customCb = null;
         refreshChrome();
-        restoreScroll();
+        if (!pipEntering && !isInPictureInPictureMode()) restoreScroll();
         if (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode()) preparePip();
     }
 
@@ -4097,7 +4115,7 @@ public class MainActivity extends Activity {
     Runnable pendingAuth;
     long authUntil, lastTouch;
     android.content.BroadcastReceiver dlReceiver;
-    int fsScrollY = -1; String fsJsScroll; Tab fsTab; long fsExitAt;
+    int fsScrollY = -1, fsScrollGeneration; String fsJsScroll; Tab fsTab; long fsExitAt;
 
 
     /** Tells the browser whether a downward drag that starts here may become pull-to-refresh. */
@@ -4425,28 +4443,30 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- fullscreen: keep scroll position
     void rememberScroll(Tab t) {
+        final int generation = ++fsScrollGeneration;
         fsTab = t;
         fsScrollY = t.web.getScrollY();
         fsJsScroll = null;
-        try { t.web.evaluateJavascript(SCROLL_JS, v -> { if (v != null && v.matches("\"[\\d.]+,[\\d.]+\"")) fsJsScroll = v.replace("\"", ""); }); }
+        try { t.web.evaluateJavascript(SCROLL_JS, v -> { if (generation == fsScrollGeneration && v != null && v.matches("\"[\\d.]+,[\\d.]+\"")) fsJsScroll = v.replace("\"", ""); }); }
         catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
     }
 
     void restoreScroll() {
         final Tab t = fsTab;
         if (t == null || fsScrollY < 0) return;
+        final int generation = ++fsScrollGeneration;
         final int y = fsScrollY;
         final String js = fsJsScroll;
         fsExitAt = System.currentTimeMillis();
         for (int delay : new int[]{50, 250, 600, 1100, 1800}) {
             ui.postDelayed(() -> {
-                if (t != current || customView != null || lastTouch > fsExitAt) return;
+                if (generation != fsScrollGeneration || t != current || customView != null || lastTouch > fsExitAt) return;
                 if (Math.abs(t.web.getScrollY() - y) <= dp(6)) return;
                 if (js != null) t.web.evaluateJavascript("window.scrollTo(" + js + ")", null);
                 else t.web.scrollTo(t.web.getScrollX(), y);
             }, delay);
         }
-        ui.postDelayed(() -> { fsTab = null; fsScrollY = -1; }, 2000);
+        ui.postDelayed(() -> { if (generation == fsScrollGeneration) { fsTab = null; fsScrollY = -1; } }, 2000);
     }
 
     // ---------------------------------------------------------------- passwords
@@ -5554,6 +5574,48 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------- picture-in-picture
     boolean pipExited, pipClosed, activityVisible, pipEntering;
     boolean pipChromeSaved, pipBarsHidden, pipStripHidden, pipFindVisible;
+    boolean pipHadFullscreen, pipReturnFullscreen;
+    Tab pipFullscreenTab;
+    String pipFullscreenUrl;
+
+    void rememberPipFullscreen() {
+        if (current == null || customView == null) return;
+        pipHadFullscreen = true;
+        pipFullscreenTab = current;
+        pipFullscreenUrl = current.web.getUrl();
+        current.web.evaluateJavascript(PIP_REMEMBER_FULLSCREEN_JS, null);
+    }
+
+    /** WebView may exit HTML fullscreen on PiP entry; restore the browser's fullscreen player host. */
+    void restorePipFullscreen() {
+        if (!pipReturnFullscreen || !activityVisible || isInPictureInPictureMode()) return;
+        pipReturnFullscreen = false; pipHadFullscreen = false;
+        Tab t = pipFullscreenTab;
+        pipFullscreenTab = null;
+        if (t == null || t != current || !java.util.Objects.equals(pipFullscreenUrl, t.web.getUrl())) return;
+        if (customView != null) { setFullscreenBars(true); return; }
+        FrameLayout host = new FrameLayout(this);
+        if (fsTab != t) rememberScroll(t);
+        if (t.web.getParent() != null) ((android.view.ViewGroup) t.web.getParent()).removeView(t.web);
+        host.addView(t.web, new FrameLayout.LayoutParams(MATCH, MATCH));
+        ImageView exit = Ui.iconBtn(this, R.drawable.ic_fullscreen_exit, Color.WHITE);
+        exit.setBackground(Ui.round(0xB3202124, 24));
+        exit.setContentDescription(L.t("Назад"));
+        exit.setOnClickListener(v -> hideCustomView());
+        FrameLayout.LayoutParams exitLp = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.END);
+        exitLp.setMargins(dp(12), dp(12), dp(12), dp(12));
+        host.addView(exit, exitLp);
+        fullscreenWebTab = t; customView = host;
+        fullscreen.addView(host, new FrameLayout.LayoutParams(MATCH, MATCH));
+        fullscreen.setVisibility(View.VISIBLE);
+        hidePwBar(); videoFab.setVisibility(View.GONE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setFullscreenBars(true);
+        setRequestedOrientation(t.mediaH > t.mediaW ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        t.web.evaluateJavascript(PIP_RESTORE_FULLSCREEN_JS, result -> {
+            if (!"true".equals(result) && fullscreenWebTab == t && customView == host) hideCustomView();
+        });
+    }
 
 
     static final String ACTION_PIP_TOGGLE = "com.lumen.browser.PIP_TOGGLE";
@@ -5563,8 +5625,6 @@ public class MainActivity extends Activity {
         pipReceiver = new android.content.BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
                 if (current == null || !isInPictureInPictureMode()) return;
-                current.mediaPlaying = !current.mediaPlaying; // optimistic icon flip, page reports the real state
-                updatePipParams();
                 current.web.evaluateJavascript(PIP_TOGGLE_JS, null);
             }
         };
@@ -5609,7 +5669,10 @@ public class MainActivity extends Activity {
     }
 
     void preparePip() {
-        if (current != null) ((LWebView) current.web).setPipVisible(true);
+        if (current != null) {
+            ((LWebView) current.web).setPipVisible(true);
+            current.web.evaluateJavascript(Scripts.R("window.__lasurPipBackground=true;"), null);
+        }
         if (!pipChromeSaved) {
             pipChromeSaved = true; pipBarsHidden = barsHidden; pipStripHidden = stripHidden;
             pipFindVisible = findBar.getVisibility() == View.VISIBLE;
@@ -5645,11 +5708,14 @@ public class MainActivity extends Activity {
         refreshChrome();
         if (customView != null) setFullscreenBars(true);
         placeFloating();
+        restorePipFullscreen();
     }
 
     @Override protected void onUserLeaveHint() {
         super.onUserLeaveHint();
         if (leavingByBack) return;
+        if (!pipChromeSaved) { pipHadFullscreen = false; pipReturnFullscreen = false; }
+        rememberPipFullscreen();
         pipEntering = pipEligible();
         if (pipEntering) ((LWebView) current.web).setPipVisible(true);
         // Android 12+ performs auto-entry; manual entry here races that transition.
@@ -5667,6 +5733,8 @@ public class MainActivity extends Activity {
     @Override public void onPictureInPictureModeChanged(boolean in, android.content.res.Configuration c) {
         super.onPictureInPictureModeChanged(in, c);
         if (in) {
+            rememberPipFullscreen();
+            pipReturnFullscreen = pipHadFullscreen;
             pipExited = false; pipClosed = false; pipEntering = false;
             if (timersPaused && current != null) { current.web.resumeTimers(); timersPaused = false; }
             if (current != null) current.web.onResume();
@@ -5687,6 +5755,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume(); activityVisible = true; pipExited = false; pipClosed = false;
+        if (current != null) current.web.evaluateJavascript(Scripts.R("window.__lasurPipBackground=false;"), null);
         leavingByBack = false;
         if (!isInPictureInPictureMode()) restorePip();
         updatePipParams();
@@ -5695,6 +5764,7 @@ public class MainActivity extends Activity {
     void stopBackgroundMedia() {
         if (current == null || current.web == null) return;
         current.mediaPlaying = false; current.mediaPipEligible = false; pipEntering = false;
+        pipReturnFullscreen = false; pipHadFullscreen = false; pipFullscreenTab = null;
         ((LWebView) current.web).setPipVisible(false);
         // Turn off transition recovery before pausing; otherwise the pause handler resumes the video.
         try { current.web.evaluateJavascript(PIP_OFF_JS + PAUSE_JS, null); } catch (Exception e) { Log.d(TAG, "stop media", e); }

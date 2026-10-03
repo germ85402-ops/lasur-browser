@@ -50,7 +50,7 @@ function page() {
     innerWidth: 1080, innerHeight: 1920, getComputedStyle: v => ({ display: v.display || 'block', visibility: 'visible' }), Date: { now: () => now },
     setInterval: fn => { intervals.push(fn); return intervals.length; }, setTimeout: (fn, delay) => timers.push({ fn, at: now + delay }),
     LumenBridge: { media: (...args) => reports.push(args) },
-    addEventListener: () => {}, __lasurKeep: true });
+    addEventListener: () => {}, __lasurKeep: true, __lasurPipBackground: true });
   context.window = context; context.top = context;
   return {
     context, reports, emit,
@@ -178,5 +178,42 @@ test('system media controls preserve user pause and resume intent', () => {
   p.run('PIP_ON_JS'); p.advance(30000);
   session.handlers.get('pause')({ action: 'pause' }); p.advance(150); assert.equal(v.paused, true);
   session.handlers.get('play')({ action: 'play' }); v.pause(); assert.equal(v.paused, false);
+});
+test('foreground return releases site pause even before PiP mode callback finishes', () => {
+  const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS'); p.advance(2000);
+  p.context.__lasurPipBackground = false; v.pause(); p.advance(150); assert.equal(v.paused, true);
+});
+test('native PiP pause bypasses a page override and remains paused after preparation', () => {
+  const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
+  v.pause = () => {}; p.run('PIP_TOGGLE_JS'); p.run('PIP_ON_JS'); p.advance(150);
+  assert.equal(v.paused, true); assert.equal(v.plays, 0); assert.equal(p.reports.at(-1)[0], 0);
+});
+test('trusted click and touch controls can pause the YouTube player in PiP', () => {
+  for (const event of ['click', 'touchstart']) {
+    const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
+    p.emit(event, v, true); v.pause(); p.advance(150); assert.equal(v.paused, true);
+  }
+});
+test('return to fullscreen preserves both playing and paused video without restarting it', () => {
+  for (const paused of [false, true]) {
+    const p = page(), v = p.video(paused); p.run('PIP_REMEMBER_FULLSCREEN_JS'); p.run('PIP_ON_JS');
+    p.run('PIP_OFF_JS'); assert.equal(p.run('PIP_RESTORE_FULLSCREEN_JS'), true);
+    assert.equal(v.classList.set.has('__lasurFullscreenPlayer'), true);
+    assert.equal(v.paused, paused); assert.equal(v.plays, 0);
+    v.pause(); assert.equal(v.paused, true);
+    p.run('FULLSCREEN_OFF_JS'); assert.equal(v.classList.set.has('__lasurFullscreenPlayer'), false);
+  }
+});
+test('fullscreen return promotes the whole YouTube player so its controls remain present', () => {
+  const p = page(), v = p.video(false), player = { parentElement: v.parentElement, classList: v.parentElement.classList };
+  v.closest = selector => selector.includes('ytd-video-preview') ? null : player; p.run('PIP_REMEMBER_FULLSCREEN_JS'); p.run('PIP_OFF_JS'); p.run('PIP_RESTORE_FULLSCREEN_JS');
+  assert.equal(player.classList.set.has('__lasurFullscreenPlayer'), true);
+  assert.equal(v.classList.set.has('__lasurFullscreenPlayer'), false);
+  assert.equal(v.plays, 0);
+});
+test('generic fullscreen restore enables controls temporarily without changing pause', () => {
+  const p = page(), v = p.video(true); v.controls = false;
+  p.run('PIP_REMEMBER_FULLSCREEN_JS'); p.run('PIP_RESTORE_FULLSCREEN_JS'); assert.equal(v.controls, true);
+  p.run('FULLSCREEN_OFF_JS'); assert.equal(v.controls, false); assert.equal(v.paused, true);
 });
 console.log(`${checked} PiP behavior checks and all injected script syntax checks passed.`);
