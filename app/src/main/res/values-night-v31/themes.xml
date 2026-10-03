@@ -1,0 +1,11 @@
+<resources>
+  <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+    <item name="android:colorAccent">#8AB4F8</item>
+    <item name="android:colorPrimary">#202124</item>
+    <item name="android:colorPrimaryDark">#202124</item>
+    <item name="android:windowBackground">#202124</item>
+    <!-- The in-app launch animation draws the falling drop; keep the system splash plain. -->
+    <item name="android:windowSplashScreenBackground">#202124</item>
+    <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
+  </style>
+</resources>

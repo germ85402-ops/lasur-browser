@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Brand drop without background (tabs, home page, launch animation). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:width="72dp" android:height="72dp" android:viewportWidth="72" android:viewportHeight="72">
+  <group android:translateX="-18" android:translateY="-17">
+    <path android:pathData="M54,22 Q78,50 78,63 A24,24 0 0,1 30,63 Q30,50 54,22Z">
+      <aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="30" android:startY="22" android:endX="78" android:endY="87" android:startColor="#FF67E8F9" android:endColor="#FF2563EB"/></aapt:attr>
+    </path>
+    <path android:pathData="M48,52 V70 H60" android:strokeColor="#FF0F172A" android:strokeAlpha="0.35" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M48,50 V68 H62" android:strokeColor="#FFFFFFFF" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <group android:rotation="28" android:pivotX="42" android:pivotY="48">
+      <path android:pathData="M39.4,48 a2.6,5 0 1,0 5.2,0 a2.6,5 0 1,0 -5.2,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.5"/>
+    </group>
+  </group>
+</vector>

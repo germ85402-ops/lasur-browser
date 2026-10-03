@@ -1625,7 +1625,7 @@ public class MainActivity extends Activity {
             View ic;
             if (t.ntp) {
                 ImageView li = inc ? Ui.icon(this, R.drawable.ic_incognito, fg2) : new ImageView(this);
-                if (!inc) li.setImageResource(R.drawable.logo);
+                if (!inc) li.setImageResource(R.drawable.ic_logo_drop);
                 li.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 ic = li;
             } else if (t.favicon != null) {
@@ -2313,7 +2313,7 @@ public class MainActivity extends Activity {
         if (t.ntp) {
             ImageView li = new ImageView(this);
             if (inc) { li = Ui.icon(this, R.drawable.ic_incognito, headFg); li.setScaleType(ImageView.ScaleType.FIT_CENTER); }
-            else li.setImageResource(R.drawable.logo);
+            else li.setImageResource(R.drawable.ic_logo_drop);
             ic = li;
         } else if (t.favicon != null) {
             FrameLayout fb = new FrameLayout(this);
@@ -5263,9 +5263,36 @@ public class MainActivity extends Activity {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setGravity(Gravity.CENTER_HORIZONTAL);
+        // The drop falls from the top, splashes down and sends ripples out from under it.
+        FrameLayout stage = new FrameLayout(this);
+        stage.setClipChildren(false);
+        final float[] ripple = {0f};
+        final android.graphics.Paint rp = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        rp.setStyle(android.graphics.Paint.Style.STROKE);
+        rp.setStrokeWidth(dp(2.5f));
+        View rings = new View(this) {
+            final android.graphics.RectF r = new android.graphics.RectF();
+            @Override protected void onDraw(Canvas cv) {
+                float p = ripple[0];
+                if (p <= 0f || p >= 1.6f) return;
+                float cx = getWidth() / 2f, cy = dp(108);
+                for (int k = 0; k < 2; k++) {
+                    float q = p - k * 0.3f;
+                    if (q <= 0f || q >= 1f) continue;
+                    float rx = dp(14) + dp(64) * q, ry = rx * 0.24f;
+                    rp.setColor(0x3B82F6);
+                    rp.setAlpha((int) (200 * (1f - q)));
+                    r.set(cx - rx, cy - ry, cx + rx, cy + ry);
+                    cv.drawOval(r, rp);
+                }
+            }
+        };
+        stage.addView(rings, new FrameLayout.LayoutParams(dp(180), dp(140)));
         ImageView logo = new ImageView(this);
-        logo.setImageResource(R.drawable.logo);
-        c.addView(logo, new LinearLayout.LayoutParams(dp(112), dp(112)));
+        logo.setImageResource(R.drawable.ic_logo_drop);
+        FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(dp(112), dp(112), Gravity.CENTER_HORIZONTAL);
+        stage.addView(logo, ll);
+        c.addView(stage, new LinearLayout.LayoutParams(dp(180), dp(140)));
         TextView name = new TextView(this);
         name.setText("Lasur");
         name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
@@ -5273,35 +5300,43 @@ public class MainActivity extends Activity {
         name.setTextColor(Ui.TEXT);
         name.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(WRAP, WRAP);
-        nl.topMargin = dp(18);
+        nl.topMargin = dp(4);
         c.addView(name, nl);
         c.setClipChildren(false);
         c.setClipToPadding(false);
-        c.setPaddingRelative(0, dp(24), 0, dp(24));
         splash.setClipChildren(false);
         splash.addView(c, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER));
         root.addView(splash, new FrameLayout.LayoutParams(MATCH, MATCH));
-        boolean sys = Build.VERSION.SDK_INT >= 31; // system splash already showed the icon: continue from it
-        logo.setScaleX(sys ? 1.25f : 0.55f);
-        logo.setScaleY(sys ? 1.25f : 0.55f);
-        logo.setAlpha(sys ? 1f : 0f);
-        logo.setRotation(sys ? 0 : -25);
+        float fall = getResources().getDisplayMetrics().heightPixels / 2f + dp(140);
+        logo.setPivotX(dp(56));
+        logo.setPivotY(dp(109)); // bottom of the drop, so the squash happens on "impact"
+        logo.setTranslationY(-fall);
         name.setAlpha(0f);
-        name.setTranslationY(dp(14));
-        logo.animate().scaleX(1f).scaleY(1f).alpha(1f).rotation(0).setDuration(360)
-                .setInterpolator(new OvershootInterpolator(1.6f)).start();
-        name.animate().alpha(1f).translationY(0).setStartDelay(140).setDuration(260)
+        name.setTranslationY(dp(10));
+        android.animation.ValueAnimator ra = android.animation.ValueAnimator.ofFloat(0f, 1.6f);
+        ra.setDuration(900);
+        ra.setStartDelay(430);
+        ra.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        ra.addUpdateListener(a -> { ripple[0] = (float) a.getAnimatedValue(); rings.invalidate(); });
+        logo.animate().translationY(0).setDuration(430)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator(1.7f))
+                .withEndAction(() -> logo.animate().scaleX(1.16f).scaleY(0.8f).setDuration(80)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                        .withEndAction(() -> logo.animate().scaleX(1f).scaleY(1f).setDuration(320)
+                                .setInterpolator(new OvershootInterpolator(2.4f)).start()).start()).start();
+        ra.start();
+        name.animate().alpha(1f).translationY(0).setStartDelay(560).setDuration(280)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
         ui.postDelayed(() -> {
             if (splash == null) return;
             final View s = splash;
             splash = null;
-            logo.animate().scaleX(1.12f).scaleY(1.12f).setStartDelay(0).setDuration(220).start();
             s.animate().alpha(0f).setDuration(240).withEndAction(() -> {
+                ra.cancel();
                 root.removeView(s);
                 if (!store.bool("onboarded", false)) showWelcome();
             }).start();
-        }, 620);
+        }, 1250);
     }
 
     // ---------------------------------------------------------------- welcome screen (first launch)
@@ -5359,7 +5394,7 @@ public class MainActivity extends Activity {
 
         if (wStep == 0) {
             ImageView logo = new ImageView(this);
-            logo.setImageResource(R.drawable.logo);
+            logo.setImageResource(R.drawable.ic_logo_drop);
             LinearLayout.LayoutParams ll = new LinearLayout.LayoutParams(dp(96), dp(96));
             ll.topMargin = dp(16);
             box.addView(logo, ll);
