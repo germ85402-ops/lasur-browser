@@ -145,6 +145,7 @@ public class MainActivity extends Activity {
         int[] D = {R.style.AppTheme_D0, R.style.AppTheme_D1, R.style.AppTheme_D2, R.style.AppTheme_D3, R.style.AppTheme_D4, R.style.AppTheme_D5, R.style.AppTheme_D6};
         setTheme(dk ? D[ac] : L[ac]);
         super.onCreate(b);
+        installCrashLog();
         Ui.init(this, tm, ac);
         AdBlocker.init(this);
         wipeIncognito();
@@ -163,6 +164,7 @@ public class MainActivity extends Activity {
         boolean viaLink = Intent.ACTION_VIEW.equals(act) || Intent.ACTION_SEND.equals(act) || Intent.ACTION_WEB_SEARCH.equals(act);
         if (b == null && !viaLink) showSplash(); else if (!store.bool("onboarded", false)) showWelcome();
         root.requestFocus();
+        if (b == null) ui.postDelayed(this::offerCrashReport, 1400);
         if (store.restoreTabs()) restoreTabs();
         boolean handled = handleIntent(getIntent());
         if (!handled) {
@@ -363,6 +365,9 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(48), 1);
         plp.setMargins(dp(4), 0, dp(4), 0);
         toolbar.addView(omniPill, plp);
+        View.OnTouchListener tabSwipe = tabSwipeListener();
+        omni.setOnTouchListener(tabSwipe);
+        omniPill.setOnTouchListener(tabSwipe);
 
         tabBtn = new FrameLayout(this);
         tabBtn.setBackground(Ui.ripple(this, true));
@@ -2521,6 +2526,7 @@ public class MainActivity extends Activity {
             menuItem(box, pw, R.drawable.ic_translate, L.t("Перевести страницу"), () -> translate(t));
             menuItem(box, pw, R.drawable.ic_share, L.t("Поделиться…"), () -> share(t.web.getUrl(), t.title));
             menuItem(box, pw, R.drawable.ic_search, L.t("Найти на странице"), this::showFind);
+            menuItem(box, pw, R.drawable.ic_print, L.t("Печать / PDF"), () -> printPage(t));
             menuItem(box, pw, R.drawable.ic_add, L.t("Добавить ярлык на главную"), () -> editShortcut(-1, true));
             LinearLayout r = menuItem(box, pw, R.drawable.ic_desktop, L.t("Версия для ПК"), () -> toggleDesktop(t));
             android.widget.CheckBox cb = new android.widget.CheckBox(this);
@@ -5751,5 +5757,132 @@ public class MainActivity extends Activity {
             timersPaused = false;
             try { current.web.resumeTimers(); if (!current.ntp) current.web.onResume(); } catch (Exception ex) { android.util.Log.d("Lasur", "ignored", ex); }
         }
+    }
+
+    // ---------------------------------------------------------------- print / PDF
+    void printPage(Tab t) {
+        if (t == null || t.web == null || t.ntp) return;
+        try {
+            String name = t.title == null || t.title.trim().isEmpty() ? "Lasur" : t.title.trim();
+            android.print.PrintManager pm = (android.print.PrintManager) getSystemService(Context.PRINT_SERVICE);
+            pm.print(name, t.web.createPrintDocumentAdapter(name), new android.print.PrintAttributes.Builder().build());
+        } catch (Exception e) { Log.d(TAG, "print", e); toast(L.t("Не удалось сохранить страницу")); }
+    }
+
+    // ---------------------------------------------------------------- swipe the address bar to switch tabs
+    View.OnTouchListener tabSwipeListener() {
+        final int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        final float[] start = new float[2];
+        final boolean[] swiping = {false};
+        return (v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    start[0] = e.getRawX(); start[1] = e.getRawY(); swiping[0] = false;
+                    return false;
+                case MotionEvent.ACTION_MOVE: {
+                    if (omni.hasFocus()) return false;
+                    float dx = e.getRawX() - start[0], dy = e.getRawY() - start[1];
+                    if (!swiping[0] && Math.abs(dx) > slop * 2 && Math.abs(dx) > Math.abs(dy) * 1.5f) {
+                        swiping[0] = true;
+                        MotionEvent c = MotionEvent.obtain(e);
+                        c.setAction(MotionEvent.ACTION_CANCEL);
+                        v.onTouchEvent(c);
+                        c.recycle();
+                    }
+                    if (swiping[0]) omniPill.setTranslationX(Math.max(-dp(40), Math.min(dp(40), dx / 3f)));
+                    return swiping[0];
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL: {
+                    if (!swiping[0]) return false;
+                    swiping[0] = false;
+                    omniPill.animate().translationX(0).setDuration(150).start();
+                    float dx = e.getRawX() - start[0];
+                    if (e.getActionMasked() == MotionEvent.ACTION_UP && Math.abs(dx) > dp(56)) {
+                        boolean rtl = root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+                        switchAdjacentTab((dx < 0) != rtl ? 1 : -1);
+                    }
+                    return true;
+                }
+            }
+            return swiping[0];
+        };
+    }
+
+    /** Selects the neighbouring tab of the same kind (regular or incognito); dir is +1 for next, -1 for previous. */
+    boolean switchAdjacentTab(int dir) {
+        if (current == null) return false;
+        ArrayList<Tab> same = new ArrayList<>();
+        for (Tab o : tabs) if (o.incognito == current.incognito) same.add(o);
+        int i = same.indexOf(current) + dir;
+        if (i < 0 || i >= same.size()) {
+            omniPill.animate().translationX(-dir * dp(10)).setDuration(80)
+                    .withEndAction(() -> omniPill.animate().translationX(0).setDuration(120).start()).start();
+            return false;
+        }
+        selectTab(same.get(i));
+        webContainer.setTranslationX(dir * dp(36));
+        webContainer.setAlpha(0.6f);
+        webContainer.animate().translationX(0).alpha(1f).setDuration(180)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        return true;
+    }
+
+    // ---------------------------------------------------------------- crash log
+    static final String CRASH_FILE = "crash.txt";
+
+    void installCrashLog() {
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        if (prev instanceof CrashLogger) return;
+        Thread.setDefaultUncaughtExceptionHandler(new CrashLogger(getApplicationContext(), prev));
+    }
+
+    static final class CrashLogger implements Thread.UncaughtExceptionHandler {
+        final Context app; final Thread.UncaughtExceptionHandler prev;
+        CrashLogger(Context app, Thread.UncaughtExceptionHandler prev) { this.app = app; this.prev = prev; }
+        @Override public void uncaughtException(Thread th, Throwable ex) {
+            try {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                ex.printStackTrace(new java.io.PrintWriter(sw));
+                String trace = sw.toString();
+                if (trace.length() > 12000) trace = trace.substring(0, 12000);
+                String text = "Lasur " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")\n"
+                        + "Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + "), " + Build.MANUFACTURER + " " + Build.MODEL + "\n"
+                        + "WebView " + webViewVersion(app) + "\n"
+                        + "Thread: " + th.getName() + "\n"
+                        + "Time: " + new java.util.Date() + "\n\n" + trace;
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(app.getFilesDir(), CRASH_FILE))) {
+                    o.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            } catch (Throwable ignored) { }
+            if (prev != null) prev.uncaughtException(th, ex);
+            else { android.os.Process.killProcess(android.os.Process.myPid()); System.exit(10); }
+        }
+    }
+
+    static String webViewVersion(Context c) {
+        try {
+            android.content.pm.PackageInfo p = WebView.getCurrentWebViewPackage();
+            return p != null ? p.packageName + " " + p.versionName : "?";
+        } catch (Throwable t) { return "?"; }
+    }
+
+    void offerCrashReport() {
+        java.io.File f = new java.io.File(getFilesDir(), CRASH_FILE);
+        if (!f.exists() || isFinishing()) return;
+        String text;
+        try { text = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8); }
+        catch (Exception e) { f.delete(); return; }
+        f.delete();
+        dialog().setTitle(L.t("Lasur неожиданно закрылся"))
+                .setMessage(L.t("Отправить отчёт об ошибке? В нём только версии приложения, Android и WebView, модель устройства и техническое описание ошибки — без истории и адресов страниц."))
+                .setPositiveButton(L.t("Отправить"), (d, w) -> {
+                    Intent i = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, L.t("Отчёт об ошибке Lasur"))
+                            .putExtra(Intent.EXTRA_TEXT, text);
+                    try { startActivity(Intent.createChooser(i, L.t("Отчёт об ошибке Lasur"))); } catch (Exception ex) { Log.d(TAG, "share crash", ex); }
+                })
+                .setNegativeButton(L.t("Не отправлять"), null)
+                .show();
     }
 }
