@@ -14,7 +14,7 @@ public class BookmarksHtmlTest {
         items.add(a); items.add(b);
         ArrayList<String> folders = new ArrayList<>();
         folders.add("Dev");
-        ArrayList<Store.Item> got = MainActivity.parseBookmarksHtml(MainActivity.exportBookmarksHtml(items, folders));
+        ArrayList<Store.Item> got = Lists.parseBookmarksHtml(Lists.exportBookmarksHtml(items, folders));
         assertEquals(2, got.size());
         Store.Item g0 = got.get(0), g1 = got.get(1);
         assertEquals("GitHub", g0.t);
@@ -29,7 +29,7 @@ public class BookmarksHtmlTest {
         String html = "<DL><p>\n<DT><H3 PERSONAL_TOOLBAR_FOLDER=\"true\">Bookmarks bar</H3>\n<DL><p>\n"
                 + "<DT><A HREF=\"https://a.example/\">A</A>\n<DT><H3>News</H3>\n<DL><p>\n<DT><A HREF=\"https://n.example/\">N &#8212; 1</A>\n</DL><p>\n"
                 + "<DT><A HREF=\"javascript:alert(1)\">bad</A>\n</DL><p>\n</DL><p>";
-        ArrayList<Store.Item> got = MainActivity.parseBookmarksHtml(html);
+        ArrayList<Store.Item> got = Lists.parseBookmarksHtml(html);
         assertEquals(2, got.size());
         assertEquals("Bookmarks bar", got.get(0).f);
         assertEquals("News", got.get(1).f);
