@@ -207,7 +207,8 @@ final class Scripts {
             + "e){return false;}})());})();");
     /** Pauses blocked during PiP leave YouTube's own state at "paused" while the video plays; realign it after return. */
     static final String PIP_SYNC_JS = R("(function(){try{var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];if(v.paused||v.ended||!v.closest)continue;"
-            + "var p=v.closest('#movie_player,.html5-video-player');if(p&&typeof p.getPlayerState=='function'&&p.getPlayerState()==2&&typeof p.playVideo=='function')p.playVideo();}}catch(e){}})();");
+            + "var p=v.closest('#movie_player,.html5-video-player');if(p&&typeof p.getPlayerState=='function'&&p.getPlayerState()==2&&typeof p.playVideo=='function')p.playVideo();}}catch(e){}"
+            + "try{window.dispatchEvent(new Event('resize'))}catch(e){}})();");
     static final String FULLSCREEN_OFF_JS = R("(function(){try{var v=window.__lasurFullscreenVideo;if(v&&window.__lasurFullscreenControls!==undefined)v.controls=window.__lasurFullscreenCo"
             + "ntrols;window.__lasurFullscreenControls=undefined;window.__lasurFullscreenVideo=null;window.__lasurFullscreenActive=0;var a=document.querySe"
             + "lectorAll('.__lasurFullscreenA,.__lasurFullscreenPlayer');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurFullscreenA','__lasurFull"
