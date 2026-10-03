@@ -164,7 +164,8 @@ final class Scripts {
             + "&eligible(e.target))window.__lasurLastPlay=Date.now();if(n=='pause'&&window.__lasurPip&&e.target===window.__lasurPipVideo)setTimeout(functio"
             + "n(){recover(e.target);rep()},120);rep()},true)});['pointerdown','mousedown','touchstart','click','keydown'].forEach(function(n){document.add"
             + "EventListener(n,function(e){if(e.isTrusted&&window.__lasurPip)window.__lasurUserPause=1},true)});['yt-navigate-finish','popstate','fullscree"
-            + "nchange','scroll','resize'].forEach(function(n){window.addEventListener(n,rep,true)});setInterval(rep,250);rep();})();");
+            + "nchange'].forEach(function(n){window.addEventListener(n,rep,true)});var rt=0;function soon(){if(!rt)rt=setTimeout(function(){rt=0;rep()},150)}"
+            + "['scroll','resize'].forEach(function(n){window.addEventListener(n,soon,{capture:true,passive:true})});setInterval(rep,400);rep();})();");
 
     static final String PIP_ON_JS = R("(function(){try{" + PIP_SELECT + "var best=begin();if(!best)return;"
             + "var st=document.getElementById('__lasurPip');if(!st){st=document.createElement('style');st.id='__lasurPip';"

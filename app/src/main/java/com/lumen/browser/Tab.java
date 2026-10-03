@@ -29,7 +29,7 @@ final class Tab {
     boolean silenced;
     boolean held, asked, popupGesture; // popup window waiting for the user's confirmation
     Tab opener;
-    boolean mediaPlaying, mediaPipEligible; int mediaW, mediaH; // selected full player, excluding feed previews
+    boolean mediaPlaying, mediaPipEligible; int mediaW, mediaH; long mediaPlayAt; // selected full player, excluding feed previews
     android.os.Bundle pendingState; // saved back/forward history, restored when the tab is shown
     long lastUsed;                  // for unloading the least recently used background tabs
     final java.util.Set<String> sslHosts = java.util.concurrent.ConcurrentHashMap.newKeySet(); // hosts whose bad certificate the user accepted

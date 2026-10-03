@@ -876,7 +876,7 @@ public class MainActivity extends Activity {
             });
         }
         @JavascriptInterface public void media(int playing, int w, int h, int eligible) {
-            ui.post(() -> { t.mediaPlaying = playing == 1; t.mediaPipEligible = eligible == 1; if (w > 0 && h > 0) { t.mediaW = w; t.mediaH = h; } if (t == current) updatePipParams(); });
+            ui.post(() -> { if (playing == 1 || t.mediaPlaying) t.mediaPlayAt = android.os.SystemClock.uptimeMillis(); t.mediaPlaying = playing == 1; t.mediaPipEligible = eligible == 1; if (w > 0 && h > 0) { t.mediaW = w; t.mediaH = h; } if (t == current) updatePipParams(); });
         }
         @JavascriptInterface public void ptr(int v) {
             t.ptrJs = v;
@@ -5635,10 +5635,20 @@ public class MainActivity extends Activity {
         } catch (Exception e) { pipReceiver = null; }
     }
 
-    boolean pipEligible() {
+    boolean pipAllowed() {
         return !leavingByBack && !pipClosed && store.bool("pip", true) && current != null && !current.ntp && switcher.getVisibility() != View.VISIBLE
-                && current.mediaPipEligible && (current.mediaPlaying || pipEntering);
+                && current.mediaPipEligible;
     }
+
+    boolean pipEligible() { return pipAllowed() && (current.mediaPlaying || pipEntering); }
+
+    /** Sites such as YouTube may pause a moment before onUserLeaveHint; treat very recent playback as playing. */
+    boolean pipRecent() {
+        return pipAllowed() && (current.mediaPlaying || android.os.SystemClock.uptimeMillis() - current.mediaPlayAt < 2000);
+    }
+
+    /** Last auto-enter value handed to the system (Android 12+). */
+    boolean pipArmed;
 
     PictureInPictureParams pipParams() {
         PictureInPictureParams.Builder b = new PictureInPictureParams.Builder();
@@ -5648,7 +5658,7 @@ public class MainActivity extends Activity {
             if (r > 2.39f) { w = 239; h = 100; } else if (r < 0.42f) { w = 42; h = 100; }
             b.setAspectRatio(new Rational(w, h));
         } else b.setAspectRatio(new Rational(16, 9));
-        if (Build.VERSION.SDK_INT >= 31) { b.setAutoEnterEnabled(pipEligible()); b.setSeamlessResizeEnabled(true); }
+        if (Build.VERSION.SDK_INT >= 31) { pipArmed = pipEligible(); b.setAutoEnterEnabled(pipArmed); b.setSeamlessResizeEnabled(true); }
         try {
             boolean playing = current != null && current.mediaPlaying;
             Intent ti = new Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName());
@@ -5716,15 +5726,19 @@ public class MainActivity extends Activity {
         if (leavingByBack) return;
         if (!pipChromeSaved) { pipHadFullscreen = false; pipReturnFullscreen = false; }
         rememberPipFullscreen();
-        pipEntering = pipEligible();
-        if (pipEntering) ((LWebView) current.web).setPipVisible(true);
-        // Android 12+ performs auto-entry; manual entry here races that transition.
-        if (Build.VERSION.SDK_INT >= 31) {
+        boolean armed = pipArmed;
+        pipEntering = pipRecent();
+        if (!pipEntering) { updatePipParams(); return; }
+        ((LWebView) current.web).setPipVisible(true);
+        // Android 12+ performs auto-entry when it was armed; manual entry then would race that transition.
+        // Prepare the page early so the shrinking window already shows only the video.
+        if (Build.VERSION.SDK_INT >= 31 && armed) {
             updatePipParams();
-            if (pipEligible()) current.web.evaluateJavascript(PIP_FS_JS, null);
+            if (!isInPictureInPictureMode()) preparePip();
             return;
         }
-        if (Build.VERSION.SDK_INT >= 26 && pipEligible() && !isInPictureInPictureMode()) {
+        // Not armed (the player paused just before leaving, or params were stale): enter manually.
+        if (Build.VERSION.SDK_INT >= 26 && !isInPictureInPictureMode()) {
             preparePip();
             try { if (!enterPictureInPictureMode(pipParams())) restorePip(); } catch (Exception e) { restorePip(); }
         }
