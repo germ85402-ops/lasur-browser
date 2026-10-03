@@ -1761,14 +1761,6 @@ public class MainActivity extends Activity {
             return sv;
         }
 
-        LinearLayout topRow = new LinearLayout(this);
-        topRow.setGravity(Gravity.END);
-        ImageView pal = Ui.iconBtn(this, R.drawable.ic_palette, ntpOnWall ? Color.WHITE : Ui.TEXT2);
-        pal.setOnClickListener(v -> showAppearance());
-        topRow.addView(pal, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        LinearLayout.LayoutParams trl = new LinearLayout.LayoutParams(MATCH, WRAP);
-        trl.topMargin = -dp(32);
-        col.addView(topRow, trl);
         col.addView(new View(this), new LinearLayout.LayoutParams(1, dp(28)));
 
         // search box
@@ -5617,6 +5609,7 @@ public class MainActivity extends Activity {
     }
 
     void preparePip() {
+        if (current != null) ((LWebView) current.web).setPipVisible(true);
         if (!pipChromeSaved) {
             pipChromeSaved = true; pipBarsHidden = barsHidden; pipStripHidden = stripHidden;
             pipFindVisible = findBar.getVisibility() == View.VISIBLE;
@@ -5638,7 +5631,11 @@ public class MainActivity extends Activity {
 
     void restorePip() {
         pipEntering = false;
-        if (current != null) current.web.evaluateJavascript(PIP_OFF_JS, null);
+        if (current != null) {
+            // Mode exit may precede Activity resume; keep the surface alive while expanding.
+            if (activityVisible) ((LWebView) current.web).setPipVisible(false);
+            current.web.evaluateJavascript(PIP_OFF_JS, null);
+        }
         if (pipChromeSaved) {
             resetBars(pipBarsHidden);
             stripHidden = pipStripHidden;
@@ -5654,6 +5651,7 @@ public class MainActivity extends Activity {
         super.onUserLeaveHint();
         if (leavingByBack) return;
         pipEntering = pipEligible();
+        if (pipEntering) ((LWebView) current.web).setPipVisible(true);
         // Android 12+ performs auto-entry; manual entry here races that transition.
         if (Build.VERSION.SDK_INT >= 31) {
             updatePipParams();
@@ -5697,6 +5695,7 @@ public class MainActivity extends Activity {
     void stopBackgroundMedia() {
         if (current == null || current.web == null) return;
         current.mediaPlaying = false; current.mediaPipEligible = false; pipEntering = false;
+        ((LWebView) current.web).setPipVisible(false);
         // Turn off transition recovery before pausing; otherwise the pause handler resumes the video.
         try { current.web.evaluateJavascript(PIP_OFF_JS + PAUSE_JS, null); } catch (Exception e) { Log.d(TAG, "stop media", e); }
         updatePipParams();

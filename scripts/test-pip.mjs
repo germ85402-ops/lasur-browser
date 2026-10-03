@@ -43,7 +43,10 @@ function page() {
   function emit(name, target, isTrusted = false) { const e = { target, isTrusted, stopped: false, stopImmediatePropagation() { this.stopped = true; } }; for (const fn of listeners.get(name) || []) { fn(e); if (e.stopped) break; } }
   const intervals = [];
   const location = { hostname: 'm.youtube.com', pathname: '/watch', search: '?v=test', href: 'https://m.youtube.com/watch?v=test' };
-  const context = vm.createContext({ document, Document, location, URLSearchParams,
+  class HTMLMediaElement { pause() { this.nativePause(); } }
+  class MediaSession { setActionHandler(action, handler) { this.handlers.set(action, handler); } constructor() { this.handlers = new Map(); } }
+  const mediaSession = new MediaSession();
+  const context = vm.createContext({ document, Document, location, URLSearchParams, HTMLMediaElement, MediaSession, navigator: { mediaSession },
     innerWidth: 1080, innerHeight: 1920, getComputedStyle: v => ({ display: v.display || 'block', visibility: 'visible' }), Date: { now: () => now },
     setInterval: fn => { intervals.push(fn); return intervals.length; }, setTimeout: (fn, delay) => timers.push({ fn, at: now + delay }),
     LumenBridge: { media: (...args) => reports.push(args) },
@@ -54,13 +57,13 @@ function page() {
     run: name => vm.runInContext(scripts[name], context),
     advance(ms) { now += ms; for (const fn of intervals) fn(); for (let i = 0; i < timers.length;) { if (timers[i].at <= now) { const [t] = timers.splice(i, 1); t.fn(); } else i++; } },
     video(paused, width = 640, height = 360) {
-      const v = { paused, videoWidth: width, videoHeight: height, currentTime: 20, ended: false, readyState: 4,
+      const v = Object.assign(new HTMLMediaElement(), { paused, videoWidth: width, videoHeight: height, currentTime: 20, ended: false, readyState: 4,
         isConnected: true, parentElement: body, classList: classList(), plays: 0,
         muted: false, controls: true, preview: false, closest() { return this.preview ? body : null; },
         getBoundingClientRect() { return { width, height, top: this.top || 0, left: 0, right: width, bottom: (this.top || 0) + height }; },
         play() { this.plays++; this.paused = false; emit('playing', this); return Promise.resolve(); },
-        pause() { this.paused = true; emit('pause', this); }
-      };
+        nativePause() { this.paused = true; emit('pause', this); }
+      });
       videos.push(v); return v;
     }
   };
@@ -83,14 +86,14 @@ test('fullscreen PiP does not start every paused video on a page', () => {
   assert.equal(other.plays, 0); assert.equal(playing.plays, 0);
 });
 test('closing PiP cancels queued transition recovery and restores styles', () => {
-  const p = page(), video = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS'); video.pause();
+  const p = page(), video = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS'); video.nativePause();
   p.run('PIP_OFF_JS'); p.run('PAUSE_JS'); p.advance(150);
   assert.equal(video.plays, 0); assert.equal(video.paused, true); assert.equal(video.classList.set.size, 0);
 });
 test('transition recovery is bounded and never loops during a long playback', () => {
   const p = page(), video = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
-  video.pause(); p.advance(150); assert.equal(video.plays, 1);
-  p.advance(6000); video.pause(); p.advance(150); assert.equal(video.plays, 1);
+  video.nativePause(); p.advance(150); assert.equal(video.plays, 1);
+  p.advance(6000); video.nativePause(); p.advance(150); assert.equal(video.plays, 1);
 });
 test('YouTube feed previews never qualify or get PiP styles', () => {
   const p = page(), preview = p.video(false); preview.muted = true;
@@ -112,11 +115,11 @@ test('visibility protection lasts throughout playback, not just its first second
 });
 test('late YouTube transition pause recovers after surface resize', () => {
   const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.advance(30000); p.run('PIP_ON_JS');
-  p.advance(3000); v.pause(); p.advance(150); assert.equal(v.paused, false); assert.equal(v.plays, 1);
+  p.advance(3000); v.nativePause(); p.advance(150); assert.equal(v.paused, false); assert.equal(v.plays, 1);
 });
 test('trusted player interaction prevents recovery from overriding user pause', () => {
   const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
-  p.emit('pointerdown', v, true); v.pause(); p.advance(150); assert.equal(v.paused, true); assert.equal(v.plays, 0);
+  p.emit('pointerdown', v, true); v.nativePause(); p.advance(150); assert.equal(v.paused, true); assert.equal(v.plays, 0);
 });
 test('hidden players and generic muted previews are excluded', () => {
   const p = page(), v = p.video(false); v.top = 2000; p.run('MEDIA_JS'); assert.equal(p.reports.at(-1)[3], 0);
@@ -136,7 +139,44 @@ test('early visibility listener shields the watch player but leaves the feed alo
 });
 test('repeated transition pause recovery stops after four attempts', () => {
   const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
-  for (let i = 0; i < 6; i++) { v.pause(); p.advance(150); }
+  for (let i = 0; i < 6; i++) { v.nativePause(); p.advance(150); }
   assert.equal(v.plays, 4); assert.equal(v.paused, true);
+});
+test('YouTube repeated script pauses are ignored for minutes without a resume loop', () => {
+  const p = page(), v = p.video(false); p.run('MEDIA_JS');
+  const sitePause = p.context.HTMLMediaElement.prototype.pause; p.run('PIP_ON_JS');
+  for (let i = 0; i < 100; i++) { p.advance(2000); sitePause.call(v); }
+  assert.equal(v.paused, false); assert.equal(v.plays, 0);
+});
+test('manual PiP pause and repeated resume remain usable after the transition timeout', () => {
+  const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS'); p.advance(30000);
+  for (let i = 0; i < 4; i++) {
+    p.run('PIP_TOGGLE_JS'); assert.equal(v.paused, true); p.advance(1000); assert.equal(v.paused, true);
+    p.run('PIP_TOGGLE_JS'); v.pause(); assert.equal(v.paused, false);
+  }
+  assert.equal(v.plays, 4);
+});
+test('pause guard affects only the pinned YouTube player inside PiP', () => {
+  const p = page(), v = p.video(false), other = p.video(false);
+  p.run('MEDIA_JS'); v.pause(); assert.equal(v.paused, true); v.play();
+  p.run('PIP_ON_JS'); other.pause(); assert.equal(other.paused, true);
+  p.context.location.hostname = 'example.org'; v.pause(); assert.equal(v.paused, true);
+});
+test('closing PiP, navigating to the feed and disabling PiP release the pause guard', () => {
+  for (const release of ['close', 'navigate', 'disable']) {
+    const p = page(), v = p.video(false); p.run('MEDIA_JS'); p.run('PIP_ON_JS');
+    if (release === 'close') p.run('PIP_OFF_JS');
+    if (release === 'navigate') p.context.location.pathname = '/';
+    if (release === 'disable') p.context.__lasurKeep = false;
+    v.pause(); p.advance(150); assert.equal(v.paused, true);
+  }
+});
+test('system media controls preserve user pause and resume intent', () => {
+  const p = page(), v = p.video(false); p.run('MEDIA_JS');
+  const session = p.context.navigator.mediaSession;
+  session.setActionHandler('pause', () => v.pause()); session.setActionHandler('play', () => v.play());
+  p.run('PIP_ON_JS'); p.advance(30000);
+  session.handlers.get('pause')({ action: 'pause' }); p.advance(150); assert.equal(v.paused, true);
+  session.handlers.get('play')({ action: 'play' }); v.pause(); assert.equal(v.paused, false);
 });
 console.log(`${checked} PiP behavior checks and all injected script syntax checks passed.`);
