@@ -58,7 +58,13 @@ final class Lists {
         col.addView(bar, new LinearLayout.LayoutParams(act.MATCH, act.dp(56)));
         View dv = new View(act); dv.setBackgroundColor(Ui.DIVIDER);
         col.addView(dv, new LinearLayout.LayoutParams(act.MATCH, 1));
-        col.addView(body, new LinearLayout.LayoutParams(act.MATCH, 0, 1));
+        int wdp = Math.round(act.scrWpx() / Ui.density);
+        if (wdp >= 840) {
+            // tablets: a readable centered column instead of very long rows
+            FrameLayout mid = new FrameLayout(act);
+            mid.addView(body, new FrameLayout.LayoutParams(act.dp(720), act.MATCH, Gravity.CENTER_HORIZONTAL));
+            col.addView(mid, new LinearLayout.LayoutParams(act.MATCH, 0, 1));
+        } else col.addView(body, new LinearLayout.LayoutParams(act.MATCH, 0, 1));
         d.setContentView(col);
         Window w = d.getWindow();
         if (w != null) act.edgeToEdge(w, col, Ui.BG, !Ui.dark);

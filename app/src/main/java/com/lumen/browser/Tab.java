@@ -34,5 +34,7 @@ final class Tab {
     long lastUsed;                  // for unloading the least recently used background tabs
     final java.util.Set<String> sslHosts = java.util.concurrent.ConcurrentHashMap.newKeySet(); // hosts whose bad certificate the user accepted
     volatile boolean mixed;         // https page loaded insecure (http) sub-resources
+    boolean readerOn;               // reader mode overlay is shown
+    String group;                   // tab group id (TabGroups), null = ungrouped
     String injectedFor;             // url the page scripts were injected for (avoid re-injecting every progress tick)
 }

@@ -32,6 +32,7 @@ final class TabSwitcher {
         act.switcher.setScaleY(0.97f);
         act.switcher.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170).start();
         act.videoFab.setVisibility(View.GONE);
+        act.incLock.check();
         act.pip.updatePipParams();
     }
 
@@ -104,8 +105,13 @@ final class TabSwitcher {
         bar.addView(more, new FrameLayout.LayoutParams(act.dp(48), act.dp(48), Gravity.END | Gravity.CENTER_VERTICAL));
         col.addView(bar, new LinearLayout.LayoutParams(act.MATCH, act.dp(60)));
 
+        act.groups.prune();
+        ArrayList<TabGroups.G> gs = act.groups.used(inc);
+        if (act.switcherGroup != null && (act.groups.get(act.switcherGroup) == null || act.groups.count(act.switcherGroup, inc) == 0)) act.switcherGroup = null;
+        final String grp = act.switcherGroup;
+        if (!gs.isEmpty()) col.addView(groupChips(gs, inc, fg, fg2), new LinearLayout.LayoutParams(act.MATCH, act.dp(48)));
         ArrayList<Tab> list = new ArrayList<>();
-        for (Tab t : act.tabs) if (t.incognito == inc) list.add(t);
+        for (Tab t : act.tabs) if (t.incognito == inc && (grp == null || grp.equals(t.group))) list.add(t);
         FrameLayout body = new FrameLayout(act);
         col.addView(body, new LinearLayout.LayoutParams(act.MATCH, 0, 1));
         if (list.isEmpty()) {
@@ -190,10 +196,56 @@ final class TabSwitcher {
         TextView ft = Ui.medium(Ui.text(act, inc ? L.t("Инкогнито") : L.t("Новая вкладка"), 15, fabFg));
         ft.setPaddingRelative(act.dp(10), 0, 0, 0);
         fab.addView(ft);
-        fab.setOnClickListener(v -> { act.switcher.setVisibility(View.GONE); act.switcher.removeAllViews(); act.newTab(null, inc, true, null); });
+        fab.setOnClickListener(v -> {
+            act.switcher.setVisibility(View.GONE); act.switcher.removeAllViews();
+            Tab n = act.createTab(inc, null);
+            n.group = grp;
+            act.selectTab(n);
+        });
         FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(act.WRAP, act.dp(56), Gravity.BOTTOM | Gravity.END);
         fl.setMargins(0, 0, act.dp(18), act.dp(22));
         act.switcher.addView(fab, fl);
+        act.incLock.check();
+    }
+
+    /** "All" + one chip per group; tap filters, long press opens the group menu. */
+    View groupChips(ArrayList<TabGroups.G> gs, boolean inc, int fg, int fg2) {
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(act);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(act);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPaddingRelative(act.dp(12), 0, act.dp(12), 0);
+        hs.addView(row, new FrameLayout.LayoutParams(act.WRAP, act.MATCH));
+        int all = 0;
+        for (Tab t : act.tabs) if (t.incognito == inc) all++;
+        row.addView(chip(L.t("Все") + " · " + all, 0, act.switcherGroup == null, inc, fg, fg2, () -> { act.switcherGroup = null; buildSwitcher(); }, null));
+        for (TabGroups.G g : gs)
+            row.addView(chip(g.name + " · " + act.groups.count(g.id, inc), g.color, g.id.equals(act.switcherGroup), inc, fg, fg2,
+                    () -> { act.switcherGroup = g.id; act.switcherAnim = true; buildSwitcher(); }, () -> act.groups.groupMenu(g, inc)));
+        return hs;
+    }
+
+    View chip(String text, int dot, boolean sel, boolean inc, int fg, int fg2, Runnable tap, Runnable longTap) {
+        LinearLayout c = new LinearLayout(act);
+        c.setGravity(Gravity.CENTER_VERTICAL);
+        c.setPaddingRelative(act.dp(dot != 0 ? 10 : 14), 0, act.dp(14), 0);
+        int selBg = inc ? 0xFF5F6368 : Ui.TONAL;
+        int border = inc ? 0xFF5F6368 : (Ui.dark ? 0xFF5F6368 : 0xFFDADCE0);
+        c.setBackground(sel ? Ui.round(selBg, 16) : Ui.stroke(android.graphics.Color.TRANSPARENT, border, 1, 16));
+        if (dot != 0) {
+            View d = new View(act);
+            d.setBackground(Ui.oval(dot));
+            LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(act.dp(10), act.dp(10));
+            dl.setMarginEnd(act.dp(8));
+            c.addView(d, dl);
+        }
+        c.addView(Ui.medium(Ui.single(act, text, 13, sel ? (inc ? android.graphics.Color.WHITE : Ui.ON_TONAL) : fg)));
+        c.setOnClickListener(v -> tap.run());
+        if (longTap != null) c.setOnLongClickListener(v -> { v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); longTap.run(); return true; });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(act.WRAP, act.dp(34));
+        lp.setMarginEnd(act.dp(8));
+        c.setLayoutParams(lp);
+        return c;
     }
 
     View tabCard(Tab t, boolean inc, int fg, int fg2) {
@@ -245,7 +297,15 @@ final class TabSwitcher {
         x.setOnClickListener(v -> card.animate().setStartDelay(0).alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(140)
                 .withEndAction(() -> act.closeTabs(act.one(t))).start());
         head.addView(x, new LinearLayout.LayoutParams(act.dp(40), act.dp(40)));
-        card.addView(head, new LinearLayout.LayoutParams(act.MATCH, act.dp(48)));
+        TabGroups.G g = act.groups.get(t.group);
+        if (g != null) {
+            View stripe = new View(act);
+            stripe.setBackground(Ui.round(g.color, 2));
+            LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(act.MATCH, act.dp(4));
+            sl.setMargins(act.dp(14), act.dp(sel ? 3 : 6), act.dp(14), 0);
+            card.addView(stripe, sl);
+        }
+        card.addView(head, new LinearLayout.LayoutParams(act.MATCH, act.dp(g != null ? 42 : 48)));
 
         FrameLayout thumbBox = new FrameLayout(act);
         thumbBox.setBackground(Ui.round(inc ? Ui.INC_BG : Ui.BG, 16));

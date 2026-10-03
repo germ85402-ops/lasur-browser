@@ -94,6 +94,11 @@ public class MainActivity extends Activity {
     final SitePermissions perms = new SitePermissions(this);
     final Onboarding onboarding = new Onboarding(this);
     final PipController pip = new PipController(this);
+    final IncognitoLock incLock = new IncognitoLock(this);
+    final ReaderMode reader = new ReaderMode(this);
+    final TabGroups groups = new TabGroups(this);
+    final Backup backup = new Backup(this);
+    String switcherGroup; // tab switcher filter (TabGroups id), null = all tabs
     /** One shared pool for background work instead of ad-hoc threads. */
     static final java.util.concurrent.ExecutorService BG = java.util.concurrent.Executors.newFixedThreadPool(3);
     /** Ordered disk writes (tab state, history). */
@@ -222,6 +227,7 @@ public class MainActivity extends Activity {
                 JSONObject o = new JSONObject();
                 o.put("u", u == null ? "" : u);
                 o.put("t", t.title);
+                if (t.group != null) o.put("g", t.group);
                 arr.put(o);
                 // back/forward history, so "Back" still works after the app was killed
                 Bundle b = t.pendingState;
@@ -271,6 +277,7 @@ public class MainActivity extends Activity {
                 Tab t = createTab(false, null);
                 String u = o.optString("u");
                 t.title = o.optString("t");
+                if (o.has("g")) t.group = o.optString("g");
                 if (!u.isEmpty()) {
                     t.pendingUrl = u; t.url = u; t.ntp = false;
                     t.pendingState = bundleFrom(new File(new File(getFilesDir(), "tabstate"), i + ".bin"));
@@ -514,6 +521,7 @@ public class MainActivity extends Activity {
         Tab t = new Tab();
         t.incognito = inc;
         t.parent = parent;
+        if (parent != null && parent.incognito == inc) t.group = parent.group;
         t.desktop = store.desktopDefault();
         t.web = newWebView(inc);
         setupWeb(t);
@@ -860,6 +868,7 @@ public class MainActivity extends Activity {
             if (url != null && url.startsWith("http")) ui.post(() -> videoUi.addVideo(t, url, t.pageUrl, title));
         }
         @JavascriptInterface public String css(String host) { return AdBlocker.cssFor(host); }
+        @JavascriptInterface public void reader(int on, int size, int theme) { ui.post(() -> reader.onState(t, on == 1, size, theme)); }
         @JavascriptInterface public void tap(float x, float y) {
             ui.post(() -> {
                 if (t.pageHost == null || !t.pageHost.endsWith("youtube.com") || t.web == null) return;
@@ -1002,6 +1011,7 @@ public class MainActivity extends Activity {
             if (t.pwPass != null) passwordsUi.maybeOfferSave(t);
             if (t == current) passwordsUi.hidePwBar();
             t.ptrJs = -1;
+            t.readerOn = false;
             t.mediaPlaying = false; t.mediaPipEligible = false;
             t.url = url;
             t.pageUrl = url;
@@ -1237,7 +1247,10 @@ public class MainActivity extends Activity {
         if (req == REQ_AUTH) {
             Runnable r = pendingAuth;
             pendingAuth = null;
+            Runnable f = pendingAuthFail;
+            pendingAuthFail = null;
             if (res == RESULT_OK) { authUntil = System.currentTimeMillis() + 120000; if (r != null) r.run(); }
+            else if (f != null) f.run();
             return;
         }
         if (req == REQ_VOICE) {
@@ -1258,6 +1271,10 @@ public class MainActivity extends Activity {
                     });
                 });
             }
+            return;
+        }
+        if (req == Backup.REQ_EXPORT || req == Backup.REQ_IMPORT) {
+            if (res == RESULT_OK && data != null) backup.onResult(req, data.getData());
             return;
         }
         if (req == Lists.REQ_BM_IMPORT || req == Lists.REQ_BM_EXPORT) {
@@ -1398,6 +1415,7 @@ public class MainActivity extends Activity {
         updateOmniButtons();
         pip.updatePipParams();
         if (isInPictureInPictureMode()) pip.preparePip();
+        incLock.check();
     }
 
     // ---------------------------------------------------------------- system bars (edge-to-edge, Android 15+ ready)
@@ -1794,6 +1812,7 @@ public class MainActivity extends Activity {
         if (findBar.getVisibility() == View.VISIBLE) { hideFind(); return true; }
         if (omni.hasFocus()) { unfocusOmni(); return true; }
         Tab t = current;
+        if (t != null && t.readerOn) { reader.close(t); return true; }
         if (t != null) {
             String u = t.web.getUrl();
             if (t.ntp && u != null && !u.equals("about:blank") && t.pendingUrl == null) { t.ntp = false; refreshChrome(); return true; }
@@ -2060,7 +2079,7 @@ public class MainActivity extends Activity {
     Tab autoTab;
     boolean switcherAnim;
     static final int REQ_AUTH = 16;
-    Runnable pendingAuth;
+    Runnable pendingAuth, pendingAuthFail;
     long authUntil, lastTouch;
     android.content.BroadcastReceiver dlReceiver;
     int fsScrollY = -1, fsScrollGeneration; String fsJsScroll; Tab fsTab; long fsExitAt;
@@ -2261,6 +2280,8 @@ public class MainActivity extends Activity {
             m.add(new Object[]{R.drawable.ic_copy, L.t("Копировать ссылку"), (Runnable) () -> menu.copy(u)});
             m.add(new Object[]{R.drawable.ic_share, L.t("Поделиться"), (Runnable) () -> menu.share(u, t.title)});
         }
+        m.add(new Object[]{R.drawable.ic_folder, t.group != null && groups.get(t.group) != null ? L.t("Переместить в группу…") : L.t("Добавить в группу…"), (Runnable) () -> groups.pickFor(t)});
+        if (t.group != null) m.add(new Object[]{R.drawable.ic_folder, L.t("Убрать из группы"), (Runnable) () -> groups.ungroup(t)});
         sheetMenu(t.ntp ? L.t("Новая вкладка") : (t.title == null || t.title.isEmpty() ? displayUrl(u) : t.title), m);
     }
 
@@ -2296,7 +2317,7 @@ public class MainActivity extends Activity {
             case MotionEvent.ACTION_DOWN:
                 ptrEngaged = false;
                 t.ptrJs = -1;
-                ptrArmed = store.bool("ptr", true) && !ptrSpinning && customView == null && !t.ntp && !SettingsUi.isReelsUrl(t.pageUrl)
+                ptrArmed = store.bool("ptr", true) && !t.readerOn && !ptrSpinning && customView == null && !t.ntp && !SettingsUi.isReelsUrl(t.pageUrl)
                         && e.getPointerCount() == 1 && w.getScrollY() <= 0;
                 ptrX0 = e.getRawX();
                 ptrY0 = e.getRawY();
@@ -2605,6 +2626,7 @@ public class MainActivity extends Activity {
         leavingByBack = false;
         if (!isInPictureInPictureMode()) pip.restorePip();
         pip.updatePipParams();
+        incLock.check();
         if (current != null) { Tab st = current; for (int d : new int[]{300, 1200}) ui.postDelayed(() -> { if (st == current && pip.activityVisible && st.web != null) st.web.evaluateJavascript(PIP_SYNC_JS, null); }, d); }
     }
 
@@ -2612,6 +2634,7 @@ public class MainActivity extends Activity {
     @Override protected void onStop() {
         super.onStop();
         if (isInPictureInPictureMode()) return;
+        incLock.onStop();
         pip.stopBackgroundMedia();
         pip.pipExited = false;
         if (current != null && current.web != null) {

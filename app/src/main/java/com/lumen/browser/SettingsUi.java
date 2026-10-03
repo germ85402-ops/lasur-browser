@@ -283,9 +283,85 @@ final class SettingsUi {
                     for (Tab t : act.tabs) { t.web.clearCache(true); t.web.clearFormData(); }
                     act.toast(L.t("Данные удалены"));
                 }).setNegativeButton(L.t("Отмена"), null).show());
+        switchRow(box, L.t("Блокировка вкладок инкогнито"), L.t("Отпечаток пальца или PIN-код при возврате в браузер"), act.store.bool("incLock", false), v -> {
+            act.store.setBool("incLock", v);
+            if (v && !act.incLock.deviceSecure()) act.toast(L.t("Сначала включите блокировку экрана в настройках Android"));
+        });
+        final TextView[] dnsSub = new TextView[1];
+        dnsSub[0] = actionRow(box, L.t("Безопасный DNS"), dnsStatus(), () -> showSecureDns(dnsSub[0]));
+        section(box, L.t("Данные"));
+        actionRow(box, L.t("Экспорт данных"), L.t("Настройки, закладки, история, ярлыки и пароли в файл"), act.backup::startExport);
+        actionRow(box, L.t("Импорт данных"), L.t("Восстановить из файла резервной копии Lasur"), act.backup::startImport);
         section(box, L.t("О браузере"));
         actionRow(box, "Lasur " + BuildConfig.VERSION_NAME, L.t("Браузер без рекламы с загрузкой видео"), null);
         act.settingsDialog = act.lists.fullDialog(L.t("Настройки"), sv, null, null);
+    }
+
+    static final String[][] DNS = {
+            {"AdGuard DNS", "dns.adguard-dns.com", "Блокирует рекламу и трекеры"},
+            {"Cloudflare", "one.one.one.one", "Быстрый, без журналов"},
+            {"Google Public DNS", "dns.google", "Надёжный и быстрый"},
+            {"Quad9", "dns.quad9.net", "Блокирует вредоносные сайты"}};
+
+    /** Android's Private DNS (DNS over TLS) for the active network; WebView always uses the system resolver. */
+    String dnsStatus() {
+        if (android.os.Build.VERSION.SDK_INT < 28) return L.t("Доступно на Android 9 и новее");
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) act.getSystemService(act.CONNECTIVITY_SERVICE);
+            android.net.Network n = cm == null ? null : cm.getActiveNetwork();
+            android.net.LinkProperties lp = n == null ? null : cm.getLinkProperties(n);
+            if (lp != null && lp.isPrivateDnsActive()) {
+                String name = lp.getPrivateDnsServerName();
+                return name != null ? L.t("Включён: ") + name : L.t("Автоматически (если сеть поддерживает)");
+            }
+            String mode = Settings.Global.getString(act.getContentResolver(), "private_dns_mode");
+            if ("hostname".equals(mode)) {
+                String h = Settings.Global.getString(act.getContentResolver(), "private_dns_specifier");
+                return L.t("Включён: ") + (h == null ? "" : h);
+            }
+            if (lp != null) return L.t("Выключен — запросы к сайтам видны сети");
+        } catch (Exception e) { Log.d("Lasur", "dns status", e); }
+        return L.t("Системный DNS");
+    }
+
+    void showSecureDns(TextView sub) {
+        if (android.os.Build.VERSION.SDK_INT < 28) { act.toast(L.t("Доступно на Android 9 и новее")); return; }
+        LinearLayout box = new LinearLayout(act);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView info = Ui.text(act, L.t("Встроенный в Android WebView движок всегда использует системный DNS, поэтому зашифровать DNS можно только для всего телефона — через «Частный DNS». Выберите провайдера: его адрес будет скопирован, затем откроются настройки сети — вставьте адрес в поле «Имя хоста провайдера».")
+                + "\n\n" + L.t("Сейчас: ") + dnsStatus(), 14, Ui.TEXT2);
+        info.setPaddingRelative(act.dp(24), act.dp(8), act.dp(24), act.dp(8));
+        box.addView(info);
+        final android.app.AlertDialog[] d = new android.app.AlertDialog[1];
+        for (String[] p : DNS) {
+            LinearLayout r = new LinearLayout(act);
+            r.setOrientation(LinearLayout.VERTICAL);
+            r.setPaddingRelative(act.dp(24), act.dp(10), act.dp(24), act.dp(10));
+            r.setBackground(Ui.ripple(act, false));
+            r.addView(Ui.text(act, p[0], 16, Ui.TEXT));
+            r.addView(Ui.text(act, p[1] + " · " + L.t(p[2]), 13, Ui.TEXT2));
+            r.setOnClickListener(v -> {
+                if (d[0] != null) d[0].dismiss();
+                ((android.content.ClipboardManager) act.getSystemService(act.CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("dns", p[1]));
+                openDnsSettings();
+                act.toast(L.t("Скопировано: ") + p[1] + L.t(". Откройте «Частный DNS» и вставьте адрес"));
+            });
+            box.addView(r, new LinearLayout.LayoutParams(act.MATCH, act.WRAP));
+        }
+        ScrollView sv = new ScrollView(act);
+        sv.addView(box);
+        d[0] = act.dialog().setTitle(L.t("Безопасный DNS")).setView(sv)
+                .setNeutralButton(L.t("Открыть настройки"), (x, w) -> openDnsSettings())
+                .setNegativeButton(L.t("Закрыть"), null).show();
+        d[0].setOnDismissListener(x -> act.ui.postDelayed(() -> sub.setText(dnsStatus()), 300));
+    }
+
+    void openDnsSettings() {
+        String[] actions = {"android.settings.PRIVATE_DNS_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS};
+        for (String a : actions) {
+            try { act.startActivity(new Intent(a).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return; }
+            catch (Exception e) { Log.d("Lasur", "no " + a); }
+        }
     }
 
     void openExternal(Tab.Video v, Tab t) {

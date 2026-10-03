@@ -34,7 +34,8 @@ final class MenuUi {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPaddingRelative(0, act.dp(4), 0, act.dp(6));
         sv.addView(box);
-        final PopupWindow pw = new PopupWindow(sv, act.dp(272), act.WRAP, true);
+        final int mw = act.dp(Math.round(act.scrWpx() / Ui.density) >= 600 ? 320 : 272);
+        final PopupWindow pw = new PopupWindow(sv, mw, act.WRAP, true);
         pw.setBackgroundDrawable(Ui.round(surface, 10));
         pw.setElevation(act.dp(10));
 
@@ -75,6 +76,7 @@ final class MenuUi {
             menuItem(box, pw, R.drawable.ic_video, t.video != null ? L.t("Найденное видео") : L.t("Видео на странице"), act.videoUi::showVideos);
             menuItem(box, pw, R.drawable.ic_translate, L.t("Перевести страницу"), () -> act.translate(t));
             menuItem(box, pw, R.drawable.ic_share, L.t("Поделиться…"), () -> share(t.web.getUrl(), t.title));
+            menuItem(box, pw, R.drawable.ic_reader, t.readerOn ? L.t("Закрыть режим чтения") : L.t("Режим чтения"), () -> act.reader.toggle(t));
             menuItem(box, pw, R.drawable.ic_search, L.t("Найти на странице"), act::showFind);
             menuItem(box, pw, R.drawable.ic_print, L.t("Печать / PDF"), () -> act.printPage(t));
             menuItem(box, pw, R.drawable.ic_add, L.t("Добавить ярлык на главную"), () -> act.home.editShortcut(-1, true));
@@ -95,10 +97,10 @@ final class MenuUi {
             act.menuBtn.getLocationInWindow(loc);
             WindowInsets wi = act.root.getRootWindowInsets();
             int avail = loc[1] - act.dp(8) - (wi != null ? act.insetsOf(wi)[1] : 0);
-            sv.measure(View.MeasureSpec.makeMeasureSpec(act.dp(272), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            sv.measure(View.MeasureSpec.makeMeasureSpec(mw, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
             int h = Math.min(sv.getMeasuredHeight(), avail);
             pw.setHeight(h);
-            pw.showAtLocation(act.root, Gravity.TOP | Gravity.START, Math.max(0, loc[0] + act.menuBtn.getWidth() - act.dp(272)), loc[1] - h + act.dp(4));
+            pw.showAtLocation(act.root, Gravity.TOP | Gravity.START, Math.max(0, loc[0] + act.menuBtn.getWidth() - mw), loc[1] - h + act.dp(4));
         } else pw.showAsDropDown(act.menuBtn, 0, -act.menuBtn.getHeight());
     }
 

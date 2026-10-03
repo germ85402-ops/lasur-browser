@@ -73,8 +73,8 @@ android {
         applicationId 'com.lumen.browser'
         minSdk 26
         targetSdk 36
-        versionCode 28
-        versionName '1.9.3'
+        versionCode 29
+        versionName '1.9.4'
     }
     buildFeatures { buildConfig true }
     testOptions { unitTests.returnDefaultValues = true }
