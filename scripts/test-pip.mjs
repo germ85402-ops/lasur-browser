@@ -211,6 +211,13 @@ test('fullscreen return promotes the whole YouTube player so its controls remain
   assert.equal(v.classList.set.has('__lasurFullscreenPlayer'), false);
   assert.equal(v.plays, 0);
 });
+test('return from PiP realigns YouTube player state when the video kept playing', () => {
+  const p = page(), v = p.video(false); let calls = 0, state = 2;
+  const player = { getPlayerState: () => state, playVideo: () => { calls++; state = 1; } };
+  v.closest = selector => selector.includes('movie_player') ? player : null;
+  p.run('PIP_SYNC_JS'); p.run('PIP_SYNC_JS'); assert.equal(calls, 1);
+  v.paused = true; state = 2; p.run('PIP_SYNC_JS'); assert.equal(calls, 1);
+});
 test('generic fullscreen restore enables controls temporarily without changing pause', () => {
   const p = page(), v = p.video(true); v.controls = false;
   p.run('PIP_REMEMBER_FULLSCREEN_JS'); p.run('PIP_RESTORE_FULLSCREEN_JS'); assert.equal(v.controls, true);

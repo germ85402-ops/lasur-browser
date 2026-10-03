@@ -5773,6 +5773,7 @@ public class MainActivity extends Activity {
         leavingByBack = false;
         if (!isInPictureInPictureMode()) restorePip();
         updatePipParams();
+        if (current != null) { Tab st = current; for (int d : new int[]{300, 1200}) ui.postDelayed(() -> { if (st == current && activityVisible && st.web != null) st.web.evaluateJavascript(PIP_SYNC_JS, null); }, d); }
     }
 
     void stopBackgroundMedia() {

@@ -195,14 +195,19 @@ final class Scripts {
             + "l5-video-player,#player-container-id,#movie_player,#player')||v;window.__lasurFullscreenVideo=v;window.__lasurFullscreenActive=1;if(player=="
             + "=v){window.__lasurFullscreenControls=v.controls;v.controls=true;}var st=document.createElement('style');st.id='__lasurFullscreen';st.textCon"
             + "tent='.__lasurFullscreenA{transform:none!important;filter:none!important;contain:none!important;perspective:none!important;overflow:visible!"
-            + "important}.__lasurFullscreenPlayer{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!im"
+            + "important;will-change:auto!important;isolation:auto!important;opacity:1!important;z-index:2147483646!important}"
+            + "html.__lasurFullscreenH ytm-mobile-topbar-renderer,html.__lasurFullscreenH #header-bar,html.__lasurFullscreenH ytd-masthead,html.__lasurFullscreenH #masthead-container{display:none!important}"
+            + ".__lasurFullscreenPlayer .html5-video-container{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;transform:none!important}.__lasurFullscreenPlayer{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!im"
             + "portant;max-height:none!important;background:#000!important;z-index:2147483647!important;margin:0!important;transform:none!important}.__lasu"
             + "rFullscreenPlayer video,video.__lasurFullscreenPlayer{width:100%!important;height:100%!important;object-fit:contain!important;max-width:none"
             + "!important;max-height:none!important;margin:0!important}.__lasurFullscreenPlayer video{position:absolute!important;left:0!important;top:0!im"
-            + "portant}html.__lasurFullscreenH,html.__lasurFullscreenH body{overflow:hidden!important;background:#000!important}';(document.head||document."
+            + "portant;right:auto!important;bottom:auto!important;transform:none!important}html.__lasurFullscreenH,html.__lasurFullscreenH body{overflow:hidden!important;background:#000!important}';(document.head||document."
             + "documentElement).appendChild(st);player.classList.add('__lasurFullscreenPlayer');for(var n=player.parentElement;n&&n!==document.documentElem"
             + "ent;n=n.parentElement)n.classList.add('__lasurFullscreenA');document.documentElement.classList.add('__lasurFullscreenH');return true;}catch("
             + "e){return false;}})());})();");
+    /** Pauses blocked during PiP leave YouTube's own state at "paused" while the video plays; realign it after return. */
+    static final String PIP_SYNC_JS = R("(function(){try{var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var v=vs[i];if(v.paused||v.ended||!v.closest)continue;"
+            + "var p=v.closest('#movie_player,.html5-video-player');if(p&&typeof p.getPlayerState=='function'&&p.getPlayerState()==2&&typeof p.playVideo=='function')p.playVideo();}}catch(e){}})();");
     static final String FULLSCREEN_OFF_JS = R("(function(){try{var v=window.__lasurFullscreenVideo;if(v&&window.__lasurFullscreenControls!==undefined)v.controls=window.__lasurFullscreenCo"
             + "ntrols;window.__lasurFullscreenControls=undefined;window.__lasurFullscreenVideo=null;window.__lasurFullscreenActive=0;var a=document.querySe"
             + "lectorAll('.__lasurFullscreenA,.__lasurFullscreenPlayer');for(var i=0;i<a.length;i++)a[i].classList.remove('__lasurFullscreenA','__lasurFull"
