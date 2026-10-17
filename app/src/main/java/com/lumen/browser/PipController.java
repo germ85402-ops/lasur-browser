@@ -70,7 +70,7 @@ final class PipController {
             if (r > 2.39f) { w = 239; h = 100; } else if (r < 0.42f) { w = 42; h = 100; }
             b.setAspectRatio(new Rational(w, h));
         } else b.setAspectRatio(new Rational(16, 9));
-        if (Build.VERSION.SDK_INT >= 31) { pipArmed = pipEligible(); b.setAutoEnterEnabled(pipArmed); b.setSeamlessResizeEnabled(true); }
+        if (Build.VERSION.SDK_INT >= 31) { pipArmed = pipEligible(); b.setAutoEnterEnabled(pipArmed); b.setSeamlessResizeEnabled(false); }
         try {
             boolean playing = act.current != null && act.current.mediaPlaying;
             Intent ti = new Intent(ACTION_PIP_TOGGLE).setPackage(act.getPackageName());
