@@ -199,7 +199,11 @@ public class MainActivity extends Activity {
         if (i == null) return false;
         String a = i.getAction();
         String url = null;
-        if (Intent.ACTION_VIEW.equals(a) && i.getData() != null) url = i.getData().toString();
+        if (Intent.ACTION_VIEW.equals(a) && i.getData() != null) {
+            url = i.getData().toString();
+            String sc = i.getData().getScheme();
+            if (sc == null || !(sc.equalsIgnoreCase("http") || sc.equalsIgnoreCase("https"))) url = null;
+        }
         else if (Intent.ACTION_SEND.equals(a)) {
             String txt = i.getStringExtra(Intent.EXTRA_TEXT);
             if (txt != null) {
@@ -1907,7 +1911,7 @@ public class MainActivity extends Activity {
         ArrayList<Object[]> it = new ArrayList<>();
         final boolean inc = current != null && current.incognito;
         final String page = current != null ? current.web.getUrl() : null;
-        if (link != null && !link.startsWith("javascript:")) {
+        if (link != null && !link.trim().toLowerCase(java.util.Locale.ROOT).startsWith("javascript:")) {
             it.add(new Object[]{R.drawable.ic_add, L.t("Открыть в новой вкладке"), (Runnable) () -> newTab(link, inc, true, current)});
             it.add(new Object[]{R.drawable.ic_add, L.t("Открыть в фоновой вкладке"), (Runnable) () -> { Tab nt = newTab(link, inc, false, current); snack(L.t("Вкладка открыта в фоне"), L.t("Перейти"), () -> { if (tabs.contains(nt)) selectTab(nt); }); }});
             if (!inc) it.add(new Object[]{R.drawable.ic_incognito, L.t("Открыть в режиме инкогнито"), (Runnable) () -> newTab(link, true, true, null)});
@@ -2074,7 +2078,7 @@ public class MainActivity extends Activity {
     LinearLayout snackView, noticeView, pwBar;
     final Runnable snackHide = this::hideSnack;
     final Runnable pwBlurR = passwordsUi::hidePwBar;
-    static final class Closed { String url, title; boolean inc, ntp; int index; Bundle state; Bitmap thumb; }
+    static final class Closed { String url, title, group; boolean inc, ntp; int index; Bundle state; Bitmap thumb; }
     final ArrayList<ArrayList<Closed>> closedStack = new ArrayList<>();
     Tab autoTab;
     boolean switcherAnim;
@@ -2209,6 +2213,7 @@ public class MainActivity extends Activity {
         c.inc = t.incognito;
         c.ntp = t.ntp && t.pendingUrl == null;
         c.title = t.title;
+        c.group = t.group;
         c.index = tabs.indexOf(t);
         c.thumb = t.thumb;
         c.url = t.pendingUrl != null ? t.pendingUrl : t.web.getUrl();
@@ -2226,6 +2231,11 @@ public class MainActivity extends Activity {
         for (Tab t : list) group.add(snapshot(t));
         java.util.Collections.sort(group, (a, b) -> Integer.compare(a.index, b.index));
         for (Tab t : new ArrayList<>(list)) closeTab(t);
+        boolean anyInc = false;
+        for (Tab o : tabs) if (o.incognito) { anyInc = true; break; }
+        // incognito data was wiped when the last incognito tab closed: nothing of it may be restorable
+        if (!anyInc) group.removeIf(c -> c.inc);
+        if (group.isEmpty()) return;
         closedStack.add(group);
         if (closedStack.size() > 15) closedStack.remove(0);
         String msg = list.size() == 1 ? (list.get(0).incognito ? L.t("Вкладка инкогнито закрыта") : L.t("Вкладка закрыта")) : L.t("Закрыто вкладок: ") + list.size();
@@ -2240,6 +2250,7 @@ public class MainActivity extends Activity {
             tabs.remove(t);
             tabs.add(Math.max(0, Math.min(c.index, tabs.size())), t);
             t.title = c.title == null ? "" : c.title;
+            t.group = c.group;
             t.thumb = c.thumb;
             if (!c.ntp && c.url != null && !c.url.isEmpty() && !c.url.equals("about:blank")) {
                 t.ntp = false;
@@ -2458,7 +2469,7 @@ public class MainActivity extends Activity {
         if (u == null || !(u.startsWith("http://") || u.startsWith("https://"))) { toast(L.t("Эту страницу нельзя скачать")); return; }
         String path = Uri.parse(u).getPath();
         String fn = Downloads.fileName(u, null, null);
-        boolean file = path != null && path.matches(".*\\.(pdf|zip|rar|7z|apk|docx?|xlsx?|pptx?|mp3|mp4|webm|mkv|jpg|jpeg|png|gif|webp|txt|epub)$");
+        boolean file = path != null && path.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(pdf|zip|rar|7z|apk|docx?|xlsx?|pptx?|mp3|mp4|webm|mkv|jpg|jpeg|png|gif|webp|txt|epub)$");
         if (file) { downloads.confirmDownload(u, fn, null, u, videoUi.uaOf(t), -1); return; }
         String title = t.title == null || t.title.trim().isEmpty() ? hostOf(u) : t.title.trim();
         final String name = Saver.clean(title.length() > 80 ? title.substring(0, 80) : title) + ".mht";

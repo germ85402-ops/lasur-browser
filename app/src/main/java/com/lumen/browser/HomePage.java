@@ -145,8 +145,9 @@ final class HomePage {
         ImageView paste = Ui.iconBtn(act, R.drawable.ic_copy, Ui.TEXT2);
         paste.setOnClickListener(v -> {
             ClipboardManager cm = (ClipboardManager) act.getSystemService(act.CLIPBOARD_SERVICE);
-            if (cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0) {
-                CharSequence s = cm.getPrimaryClip().getItemAt(0).coerceToText(act);
+            android.content.ClipData clip = cm.hasPrimaryClip() ? cm.getPrimaryClip() : null;
+            if (clip != null && clip.getItemCount() > 0) {
+                CharSequence s = clip.getItemAt(0).coerceToText(act);
                 if (s != null && s.toString().trim().length() > 0) { act.navigate(s.toString()); return; }
             }
             act.toast(L.t("Буфер обмена пуст"));
